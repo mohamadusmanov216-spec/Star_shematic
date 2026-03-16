@@ -1,5 +1,5 @@
 plugins {
-    id 'fabric-loom' version '1.8-SNAPSHOT'
+    id 'fabric-loom' version '1.10.1'
     id 'maven-publish'
 }
 
@@ -21,6 +21,7 @@ dependencies {
     modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
 
     testImplementation "org.junit.jupiter:junit-jupiter:5.11.3"
+    testRuntimeOnly "org.junit.platform:junit-platform-launcher:1.11.3"
 }
 
 processResources {

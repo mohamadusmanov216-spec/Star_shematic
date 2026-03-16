@@ -13,7 +13,7 @@ public final class InventoryController {
         for (int slot = 0; slot < 9; slot++) {
             ItemStack stack = player.getInventory().getStack(slot);
             if (stack.getItem() instanceof BlockItem blockItem && blockItem.getBlock() == block) {
-                player.getInventory().selectedSlot = slot;
+                player.getInventory().setSelectedSlot(slot);
                 return true;
             }
         }
