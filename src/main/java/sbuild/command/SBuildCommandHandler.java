@@ -23,6 +23,9 @@ import java.util.List;
 import java.util.Map;
 
 public final class SBuildCommandHandler {
+    private static final int MATERIAL_ROWS_PREVIEW = 12;
+    private static final int PLAN_ROWS_PREVIEW = 10;
+
     private final BuildStateService buildState;
     private final SchematicService schematics;
     private final WorldService worldService;
@@ -50,52 +53,54 @@ public final class SBuildCommandHandler {
     }
 
     public int handleRoot(CommandContext<ServerCommandSource> ctx) {
-        ctx.getSource().sendFeedback(() -> Text.literal("SBuild: /sbuild help"), false);
+        sendInfo(ctx.getSource(), Text.translatable("command.sbuild.root"));
         return 1;
     }
 
     public int handleStatus(CommandContext<ServerCommandSource> ctx) {
         String schematic = buildState.loadedSchematic().map(LoadedSchematic::name).orElse("none");
         int blocks = buildState.loadedSchematic().map(LoadedSchematic::blockCount).orElse(0);
-        ctx.getSource().sendFeedback(() -> Text.literal("status: schematic=" + schematic + ", blocks=" + blocks), false);
+        sendInfo(ctx.getSource(), Text.translatable("command.sbuild.status.summary", schematic, blocks));
         return 1;
     }
 
     public int handleHelp(CommandContext<ServerCommandSource> ctx) {
-        List<String> lines = List.of(
-            "/sbuild status",
-            "/sbuild schematic scan|list|load <name>|info",
-            "/sbuild materials report",
-            "/sbuild chest set <name>|list",
-            "/sbuild planner preview",
-            "/ai_help <query>"
+        ServerCommandSource source = ctx.getSource();
+        sendInfo(source, Text.translatable("command.sbuild.help.header"));
+        List<Text> lines = List.of(
+            Text.translatable("command.sbuild.help.status"),
+            Text.translatable("command.sbuild.help.schematic"),
+            Text.translatable("command.sbuild.help.materials"),
+            Text.translatable("command.sbuild.help.chest"),
+            Text.translatable("command.sbuild.help.planner"),
+            Text.translatable("command.sbuild.help.ai")
         );
-        for (String line : lines) {
-            ctx.getSource().sendFeedback(() -> Text.literal(line), false);
-        }
+        lines.forEach(line -> sendInfo(source, line));
         return 1;
     }
 
     public int handleAiHelp(CommandContext<ServerCommandSource> ctx, String query) {
-        String response = aiService.respond(query, buildState, storage);
-        ctx.getSource().sendFeedback(() -> Text.literal("AI -> " + response), false);
+        AiService.AssistantReply reply = aiService.respond(query, buildState, storage);
+        sendInfo(ctx.getSource(), Text.translatable("command.sbuild.ai.prefix", Text.translatable(reply.key(), reply.args())));
         return 1;
     }
 
     public int handleSchematicScan(CommandContext<ServerCommandSource> ctx) {
         List<Path> paths = schematics.scanSchematics();
-        ctx.getSource().sendFeedback(() -> Text.literal("found " + paths.size() + " schematics in " + schematics.rootDirectory()), false);
+        sendInfo(ctx.getSource(), Text.translatable("command.sbuild.schematic.scan.result", paths.size(), schematics.rootDirectory().toString()));
         return 1;
     }
 
     public int handleSchematicList(CommandContext<ServerCommandSource> ctx) {
         List<Path> paths = schematics.scanSchematics();
         if (paths.isEmpty()) {
-            ctx.getSource().sendFeedback(() -> Text.literal("no .litematic files found"), false);
+            sendInfo(ctx.getSource(), Text.translatable("command.sbuild.schematic.list.empty"));
             return 1;
         }
+
+        sendInfo(ctx.getSource(), Text.translatable("command.sbuild.schematic.list.header", paths.size()));
         for (Path path : paths) {
-            ctx.getSource().sendFeedback(() -> Text.literal("- " + path.getFileName()), false);
+            sendInfo(ctx.getSource(), Text.translatable("command.sbuild.schematic.list.entry", path.getFileName().toString()));
         }
         return 1;
     }
@@ -104,23 +109,28 @@ public final class SBuildCommandHandler {
         return schematics.loadByName(name)
             .map(loaded -> {
                 buildState.setLoadedSchematic(loaded);
-                ctx.getSource().sendFeedback(() -> Text.literal("loaded schematic: " + loaded.name() + " blocks=" + loaded.blockCount()), false);
+                sendInfo(ctx.getSource(), Text.translatable("command.sbuild.schematic.load.success", loaded.name(), loaded.blockCount()));
                 return 1;
             })
             .orElseGet(() -> {
-                ctx.getSource().sendError(Text.literal("schematic not found: " + name));
+                sendError(ctx.getSource(), Text.translatable("command.sbuild.schematic.load.not_found", name));
                 return 0;
             });
     }
 
     public int handleSchematicInfo(CommandContext<ServerCommandSource> ctx) {
         return buildState.loadedSchematic().map(schematic -> {
-            ctx.getSource().sendFeedback(() -> Text.literal("name=" + schematic.name() + ", format=" + schematic.format() + ", blocks=" + schematic.blockCount()), false);
-            ctx.getSource().sendFeedback(() -> Text.literal("bbox=" + schematic.boundingBox().min() + " -> " + schematic.boundingBox().max()
-                + ", regions=" + schematic.stats().regionCount() + ", palette=" + schematic.stats().paletteEntries()), false);
+            sendInfo(ctx.getSource(), Text.translatable("command.sbuild.schematic.info.summary", schematic.name(), schematic.format(), schematic.blockCount()));
+            sendInfo(ctx.getSource(), Text.translatable(
+                "command.sbuild.schematic.info.bounds",
+                schematic.boundingBox().min().toString(),
+                schematic.boundingBox().max().toString(),
+                schematic.stats().regionCount(),
+                schematic.stats().paletteEntries()
+            ));
             return 1;
         }).orElseGet(() -> {
-            ctx.getSource().sendError(Text.literal("no loaded schematic"));
+            sendError(ctx.getSource(), Text.translatable("command.sbuild.error.no_loaded_schematic"));
             return 0;
         });
     }
@@ -134,7 +144,7 @@ public final class SBuildCommandHandler {
 
         PlacementController placement = buildState.placement().orElse(null);
         if (placement == null) {
-            source.sendError(Text.literal("no loaded schematic"));
+            sendError(source, Text.translatable("command.sbuild.error.no_loaded_schematic"));
             return 0;
         }
 
@@ -145,10 +155,15 @@ public final class SBuildCommandHandler {
         MaterialAvailability availability = storage.aggregateAvailability(player.getServerWorld());
         MaterialReport report = materials.analyze(placement, worldStates, availability);
 
-        source.sendFeedback(() -> Text.literal("materials: required=" + report.totalRequired() + ", built=" + report.totalAlreadyBuilt()
-            + ", remaining=" + report.totalRemaining() + ", available=" + report.totalAvailableInInventory()), false);
-        report.rows().stream().limit(12).forEach(row ->
-            source.sendFeedback(() -> Text.literal("- " + row.materialKey() + " need=" + row.remaining() + " inv=" + row.availableInInventory()), false)
+        sendInfo(source, Text.translatable(
+            "command.sbuild.materials.report.summary",
+            report.totalRequired(),
+            report.totalAlreadyBuilt(),
+            report.totalRemaining(),
+            report.totalAvailableInInventory()
+        ));
+        report.rows().stream().limit(MATERIAL_ROWS_PREVIEW).forEach(row ->
+            sendInfo(source, Text.translatable("command.sbuild.materials.report.row", row.materialKey(), row.remaining(), row.availableInInventory()))
         );
         return 1;
     }
@@ -158,9 +173,10 @@ public final class SBuildCommandHandler {
         if (player == null) {
             return 0;
         }
+
         PlacementController placement = buildState.placement().orElse(null);
         if (placement == null) {
-            ctx.getSource().sendError(Text.literal("no loaded schematic"));
+            sendError(ctx.getSource(), Text.translatable("command.sbuild.error.no_loaded_schematic"));
             return 0;
         }
 
@@ -170,9 +186,9 @@ public final class SBuildCommandHandler {
         );
         BuildPlannerService.BuildPlan plan = planner.createPlan(placement, worldStates);
 
-        ctx.getSource().sendFeedback(() -> Text.literal("plan tasks=" + plan.tasks().size() + ", skipped=" + plan.skippedAlreadyCorrect()), false);
-        plan.tasks().stream().limit(10).forEach(task ->
-            ctx.getSource().sendFeedback(() -> Text.literal("- " + task.position() + " -> " + task.requiredState()), false)
+        sendInfo(ctx.getSource(), Text.translatable("command.sbuild.planner.preview.summary", plan.tasks().size(), plan.skippedAlreadyCorrect()));
+        plan.tasks().stream().limit(PLAN_ROWS_PREVIEW).forEach(task ->
+            sendInfo(ctx.getSource(), Text.translatable("command.sbuild.planner.preview.row", task.position().toString(), task.requiredState()))
         );
         return 1;
     }
@@ -186,10 +202,10 @@ public final class SBuildCommandHandler {
         try {
             ServerWorld world = player.getServerWorld();
             StoragePoint point = storage.registerLookedAtChest(world, player, name);
-            source.sendFeedback(() -> Text.literal("storage registered: " + point.name() + " @ " + formatPos(point)), false);
+            sendInfo(source, Text.translatable("command.sbuild.chest.set.success", point.name(), formatPos(point)));
             return 1;
         } catch (Exception e) {
-            source.sendError(Text.literal("failed: " + e.getMessage()));
+            sendError(source, Text.translatable("command.sbuild.chest.set.failed", e.getMessage()));
             return 0;
         }
     }
@@ -197,12 +213,13 @@ public final class SBuildCommandHandler {
     public int handleChestList(CommandContext<ServerCommandSource> ctx) {
         List<StoragePoint> points = storage.listStoragePoints();
         if (points.isEmpty()) {
-            ctx.getSource().sendFeedback(() -> Text.literal("no storage points"), false);
+            sendInfo(ctx.getSource(), Text.translatable("command.sbuild.chest.list.empty"));
             return 1;
         }
 
+        sendInfo(ctx.getSource(), Text.translatable("command.sbuild.chest.list.header", points.size()));
         for (StoragePoint point : points) {
-            ctx.getSource().sendFeedback(() -> Text.literal("- " + point.name() + " @ " + formatPos(point) + " p=" + point.priority()), false);
+            sendInfo(ctx.getSource(), Text.translatable("command.sbuild.chest.list.entry", point.name(), formatPos(point), point.priority()));
         }
         return 1;
     }
@@ -211,12 +228,20 @@ public final class SBuildCommandHandler {
         try {
             return source.getPlayerOrThrow();
         } catch (Exception e) {
-            source.sendError(Text.literal("player-only command"));
+            sendError(source, Text.translatable("command.sbuild.error.player_only"));
             return null;
         }
     }
 
     private String formatPos(StoragePoint point) {
         return point.blockPos().getX() + "," + point.blockPos().getY() + "," + point.blockPos().getZ();
+    }
+
+    private void sendInfo(ServerCommandSource source, Text text) {
+        source.sendFeedback(() -> text, false);
+    }
+
+    private void sendError(ServerCommandSource source, Text text) {
+        source.sendError(text);
     }
 }
