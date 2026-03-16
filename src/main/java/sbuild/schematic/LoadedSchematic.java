@@ -7,12 +7,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-/**
- * Immutable in-memory model загруженной схематики.
- *
- * <p>Структура ориентирована на дальнейший planner/AI-пайплайн:
- * хранит нормализованные блоки, метаданные и границы для быстрых запросов.</p>
- */
 public record LoadedSchematic(
     String id,
     String name,
@@ -22,6 +16,7 @@ public record LoadedSchematic(
     Instant lastModified,
     SchematicBoundingBox boundingBox,
     Map<BlockPosition, String> blocks,
+    SchematicStats stats,
     Map<String, String> metadata
 ) {
     public LoadedSchematic {
@@ -33,22 +28,16 @@ public record LoadedSchematic(
         return Optional.ofNullable(blocks.get(position));
     }
 
-    public boolean hasBlockAt(BlockPosition position) {
-        return blocks.containsKey(position);
-    }
-
     public int blockCount() {
         return blocks.size();
     }
 
-
     public Map<String, Long> requiredBlockStates() {
         Map<String, Long> counts = new java.util.HashMap<>();
         for (String state : blocks.values()) {
-            if ("minecraft:air".equals(state)) {
-                continue;
+            if (!"minecraft:air".equals(state)) {
+                counts.merge(state, 1L, Long::sum);
             }
-            counts.merge(state, 1L, Long::sum);
         }
         return Map.copyOf(counts);
     }
@@ -57,12 +46,11 @@ public record LoadedSchematic(
         return List.copyOf(blocks.entrySet());
     }
 
-    /**
-     * Целочисленная позиция блока в локальных координатах схематики.
-     */
     public record BlockPosition(int x, int y, int z) {
         public BlockPosition add(int dx, int dy, int dz) {
             return new BlockPosition(x + dx, y + dy, z + dz);
         }
     }
+
+    public record SchematicStats(int regionCount, int paletteEntries, int airBlocks) {}
 }

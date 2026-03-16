@@ -10,6 +10,10 @@ public final class SBuildCommand {
     }
 
     public static void register(CommandDispatcher<ServerCommandSource> dispatcher, SBuildCommandHandler handler) {
+        dispatcher.register(CommandManager.literal("ai_help")
+            .then(CommandManager.argument("query", StringArgumentType.greedyString())
+                .executes(ctx -> handler.handleAiHelp(ctx, StringArgumentType.getString(ctx, "query")))));
+
         dispatcher.register(CommandManager.literal("sbuild")
             .executes(handler::handleRoot)
             .then(CommandManager.literal("status").executes(handler::handleStatus))

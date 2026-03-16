@@ -1,0 +1,5 @@
+{
+  "mod.sbuild.name": "SBuild",
+  "command.sbuild.status": "SBuild status",
+  "command.sbuild.ai.prefix": "AI -> %s"
+}
