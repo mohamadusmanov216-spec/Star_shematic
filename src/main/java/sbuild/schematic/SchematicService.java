@@ -1,30 +1,21 @@
 package sbuild.schematic;
 
-import sbuild.config.ConfigService;
-
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 
 /**
- * Фасад модуля схематик: сканирование, загрузка и API размещения.
+ * Schematic discovery/loading APIs used by commands and planner.
  */
 public final class SchematicService {
-    @SuppressWarnings("unused")
-    private final ConfigService configService;
     private final SchematicRepository repository;
 
-    public SchematicService(ConfigService configService) {
-        this(configService, new SchematicRepository(new SchematicLoader()));
+    public SchematicService() {
+        this(new SchematicRepository(new SchematicLoader()));
     }
 
-    public SchematicService(ConfigService configService, SchematicRepository repository) {
-        this.configService = configService;
+    public SchematicService(SchematicRepository repository) {
         this.repository = repository;
-    }
-
-    public void initialize() {
-        repository.initialize();
     }
 
     public Path rootDirectory() {
@@ -39,12 +30,12 @@ public final class SchematicService {
         return repository.load(path);
     }
 
-    public List<LoadedSchematic> loadAll() {
-        return repository.loadAll();
+    public Optional<LoadedSchematic> loadByName(String name) {
+        return repository.loadByName(name);
     }
 
-    public Optional<LoadedSchematic> findCachedById(String id) {
-        return repository.findById(id);
+    public List<LoadedSchematic> loadAll() {
+        return repository.loadAll();
     }
 
     public PlacementController createPlacementController(LoadedSchematic schematic, SchematicTransform transform) {

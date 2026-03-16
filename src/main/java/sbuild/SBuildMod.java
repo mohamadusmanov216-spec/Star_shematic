@@ -1,18 +1,18 @@
 package sbuild;
 
-import net.fabricmc.api.ModInitializer;
-import net.fabricmc.loader.api.FabricLoader;
 import net.fabricmc.api.EnvType;
+import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
+import net.fabricmc.loader.api.FabricLoader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import sbuild.ai.AiService;
 import sbuild.block.BlockPlacementService;
 import sbuild.bot.BuildBotService;
+import sbuild.command.CommandService;
 import sbuild.command.SBuildCommand;
 import sbuild.command.SBuildCommandHandler;
 import sbuild.config.ConfigService;
-import sbuild.command.CommandService;
 import sbuild.gui.GuiService;
 import sbuild.materials.MaterialAnalysisService;
 import sbuild.planner.BuildPlannerService;
@@ -26,12 +26,6 @@ import sbuild.util.ModuleBootstrap;
 import sbuild.util.UtilityService;
 import sbuild.world.WorldService;
 
-/**
- * Main Fabric entrypoint for SBuild.
- *
- * <p>This class wires module services together and registers top-level integration points
- * (commands, future events, etc.) while keeping feature logic in dedicated modules.</p>
- */
 public final class SBuildMod implements ModInitializer {
     public static final String MOD_ID = "sbuild";
     public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
@@ -40,42 +34,33 @@ public final class SBuildMod implements ModInitializer {
     public void onInitialize() {
         AppContext context = createContext();
         registerCommands(context);
-        LOGGER.info("SBuild base architecture initialized.");
+        LOGGER.info("SBuild initialized.");
     }
 
     private AppContext createContext() {
-        ConfigService configService = new ConfigService();
         BuildStateService stateService = new BuildStateService();
-        CommandService commandService = new CommandService();
-        SchematicService schematicService = new SchematicService(configService);
-        GuiService guiService = new GuiService();
-        RenderService renderService = new RenderService(schematicService, stateService);
+        SchematicService schematicService = new SchematicService();
         WorldService worldService = new WorldService();
         MaterialAnalysisService materialAnalysisService = new MaterialAnalysisService();
         StorageService storageService = new StorageService();
         BuildPlannerService plannerService = new BuildPlannerService();
-        AiService aiService = new AiService();
-        RedstoneService redstoneService = new RedstoneService();
-        BlockPlacementService blockPlacementService = new BlockPlacementService();
-        BuildBotService buildBotService = new BuildBotService();
-        UtilityService utilityService = new UtilityService();
 
         AppContext context = new AppContext(
-            configService,
-            commandService,
+            new ConfigService(),
+            new CommandService(),
             stateService,
             schematicService,
-            guiService,
-            renderService,
+            new GuiService(),
+            new RenderService(schematicService, stateService),
             worldService,
             materialAnalysisService,
             storageService,
             plannerService,
-            aiService,
-            redstoneService,
-            blockPlacementService,
-            buildBotService,
-            utilityService
+            new AiService(),
+            new RedstoneService(),
+            new BlockPlacementService(),
+            new BuildBotService(),
+            new UtilityService()
         );
 
         ModuleBootstrap bootstrap = new ModuleBootstrap(context);
@@ -87,7 +72,14 @@ public final class SBuildMod implements ModInitializer {
     }
 
     private void registerCommands(AppContext context) {
-        SBuildCommandHandler handler = new SBuildCommandHandler(context.buildStateService(), context.storageService());
+        SBuildCommandHandler handler = new SBuildCommandHandler(
+            context.buildStateService(),
+            context.schematicService(),
+            context.worldService(),
+            context.materialAnalysisService(),
+            context.storageService(),
+            context.plannerService()
+        );
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
             SBuildCommand.register(dispatcher, handler)
         );

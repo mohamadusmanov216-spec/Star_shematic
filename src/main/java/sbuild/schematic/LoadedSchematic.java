@@ -41,6 +41,18 @@ public record LoadedSchematic(
         return blocks.size();
     }
 
+
+    public Map<String, Long> requiredBlockStates() {
+        Map<String, Long> counts = new java.util.HashMap<>();
+        for (String state : blocks.values()) {
+            if ("minecraft:air".equals(state)) {
+                continue;
+            }
+            counts.merge(state, 1L, Long::sum);
+        }
+        return Map.copyOf(counts);
+    }
+
     public Collection<Map.Entry<BlockPosition, String>> entries() {
         return List.copyOf(blocks.entrySet());
     }

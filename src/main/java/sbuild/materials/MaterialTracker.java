@@ -38,6 +38,9 @@ public final class MaterialTracker {
         for (Map.Entry<LoadedSchematic.BlockPosition, String> requiredEntry : placement.transformedEntries()) {
             String requiredBlockState = requiredEntry.getValue();
             String requiredMaterial = itemResolver.resolveItemKey(requiredBlockState);
+            if ("minecraft:air".equals(requiredMaterial)) {
+                continue;
+            }
             increment(requiredByMaterial, requiredMaterial, 1L);
 
             String worldBlockState = placedWorldBlocks.get(requiredEntry.getKey());
