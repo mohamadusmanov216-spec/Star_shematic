@@ -24,17 +24,11 @@ final class LitematicParser {
             }
 
             Map<String, String> metadata = readMetadata(rootMap.get("Metadata"));
-            Object regionsRaw = rootMap.get("Regions");
-            if (!(regionsRaw instanceof Map<?, ?> regionsMap) || regionsMap.isEmpty()) {
-                throw new IllegalArgumentException("Litematic has no regions: " + path.getFileName());
-            }
+            List<RegionModel> regions = extractRegions(rootMap.get("Regions"));
 
             ParseAccumulator acc = new ParseAccumulator();
-            for (Map.Entry<?, ?> regionEntry : regionsMap.entrySet()) {
-                if (!(regionEntry.getValue() instanceof Map<?, ?> region)) {
-                    continue;
-                }
-                readRegion(region, regionEntry.getKey(), acc);
+            for (RegionModel region : regions) {
+                decodeRegionBlocks(region, acc);
                 acc.regionCount++;
             }
 
@@ -50,58 +44,91 @@ final class LitematicParser {
         }
     }
 
-    private void readRegion(Map<?, ?> region, Object regionName, ParseAccumulator out) {
-        Vec3 pos = readVec3(region.get("Position"));
-        Vec3 size = readVec3(region.get("Size"));
-
-        int sizeX = Math.abs(size.x());
-        int sizeY = Math.abs(size.y());
-        int sizeZ = Math.abs(size.z());
-        if (sizeX == 0 || sizeY == 0 || sizeZ == 0) {
-            return;
+    List<RegionModel> extractRegions(Object regionsRaw) {
+        if (!(regionsRaw instanceof Map<?, ?> regionsMap) || regionsMap.isEmpty()) {
+            throw new IllegalArgumentException("Litematic has no regions");
         }
 
-        int startX = size.x() >= 0 ? pos.x() : pos.x() + size.x() + 1;
-        int startY = size.y() >= 0 ? pos.y() : pos.y() + size.y() + 1;
-        int startZ = size.z() >= 0 ? pos.z() : pos.z() + size.z() + 1;
+        List<RegionModel> regions = new ArrayList<>();
+        for (Map.Entry<?, ?> regionEntry : regionsMap.entrySet()) {
+            if (!(regionEntry.getValue() instanceof Map<?, ?> regionRaw)) {
+                continue;
+            }
+            regions.add(readRegionModel(regionEntry.getKey(), regionRaw));
+        }
 
-        List<SchematicBlockState> palette = readPalette(region.get("BlockStatePalette"));
+        if (regions.isEmpty()) {
+            throw new IllegalArgumentException("Litematic regions are malformed");
+        }
+
+        return List.copyOf(regions);
+    }
+
+    RegionModel readRegionModel(Object regionName, Map<?, ?> region) {
+        Vec3 position = readVec3(region.get("Position"));
+        Vec3 size = readVec3(region.get("Size"));
+        RegionVolume volume = RegionVolume.from(position, size);
+        PaletteModel palette = readPaletteModel(regionName, region.get("BlockStatePalette"));
         long[] blockStates = readLongArray(region.get("BlockStates"));
-        if (palette.isEmpty()) {
+
+        validatePackedData(regionName, volume, palette, blockStates);
+        return new RegionModel(String.valueOf(regionName), volume, palette, blockStates);
+    }
+
+    PaletteModel readPaletteModel(Object regionName, Object value) {
+        if (!(value instanceof List<?> list)) {
+            throw new IllegalArgumentException("Region has invalid palette: " + regionName);
+        }
+
+        List<SchematicBlockState> entries = new ArrayList<>();
+        for (Object item : list) {
+            if (!(item instanceof Map<?, ?> state)) {
+                continue;
+            }
+            Object nameRaw = state.get("Name");
+            if (!(nameRaw instanceof String name)) {
+                continue;
+            }
+            Object propertiesRaw = state.get("Properties");
+            Map<String, String> props = propertiesRaw instanceof Map<?, ?> propsMap ? readProperties(propsMap) : Map.of();
+            entries.add(SchematicBlockState.of(name, props));
+        }
+
+        if (entries.isEmpty()) {
             throw new IllegalArgumentException("Region has empty palette: " + regionName);
         }
 
-        int volume = sizeX * sizeY * sizeZ;
-        int bitsPerBlock = bitsPerBlock(palette.size());
-        int requiredLongs = (int) Math.ceil((double) ((long) volume * bitsPerBlock) / 64D);
-        if (blockStates.length < requiredLongs) {
-            throw new IllegalArgumentException("Region has truncated block states: " + regionName);
-        }
-        out.paletteEntries += palette.size();
+        return new PaletteModel(List.copyOf(entries));
+    }
 
-        for (int index = 0; index < volume; index++) {
-            int paletteIndex = readPackedValue(blockStates, index, bitsPerBlock);
-            if (paletteIndex < 0 || paletteIndex >= palette.size()) {
-                throw new IllegalArgumentException("Palette index out of range in region: " + regionName);
+    void decodeRegionBlocks(RegionModel region, ParseAccumulator out) {
+        out.paletteEntries += region.palette().size();
+
+        for (int index = 0; index < region.volume().blockCount(); index++) {
+            int paletteIndex = readPackedValue(region.blockStates(), index, region.palette().bitsPerBlock());
+            if (paletteIndex < 0 || paletteIndex >= region.palette().size()) {
+                throw new IllegalArgumentException("Palette index out of range in region: " + region.name());
             }
 
-            int x = index % sizeX;
-            int z = (index / sizeX) % sizeZ;
-            int y = index / (sizeX * sizeZ);
-
-            SchematicBlockState blockState = palette.get(paletteIndex);
+            LoadedSchematic.BlockPosition worldPos = region.volume().worldPosition(index);
+            SchematicBlockState blockState = region.palette().entry(paletteIndex);
             if (blockState.isAir()) {
                 out.airBlocks++;
                 continue;
             }
-
-            LoadedSchematic.BlockPosition worldPos = new LoadedSchematic.BlockPosition(startX + x, startY + y, startZ + z);
             out.blocks.put(worldPos, blockState);
         }
     }
 
-    private int bitsPerBlock(int paletteSize) {
-        return Math.max(2, 32 - Integer.numberOfLeadingZeros(Math.max(1, paletteSize - 1)));
+    private void validatePackedData(Object regionName, RegionVolume volume, PaletteModel palette, long[] blockStates) {
+        if (volume.isEmpty()) {
+            throw new IllegalArgumentException("Region has empty size: " + regionName);
+        }
+
+        int requiredLongs = (int) Math.ceil((double) ((long) volume.blockCount() * palette.bitsPerBlock()) / 64D);
+        if (blockStates.length < requiredLongs) {
+            throw new IllegalArgumentException("Region has truncated block states: " + regionName);
+        }
     }
 
     private int readPackedValue(long[] data, int index, int bitsPerValue) {
@@ -120,23 +147,6 @@ final class LitematicParser {
 
         long mask = bitsPerValue == 64 ? -1L : (1L << bitsPerValue) - 1L;
         return (int) (value & mask);
-    }
-
-    private List<SchematicBlockState> readPalette(Object value) {
-        if (!(value instanceof List<?> list)) {
-            return List.of();
-        }
-
-        List<SchematicBlockState> palette = new ArrayList<>();
-        for (Object item : list) {
-            if (!(item instanceof Map<?, ?> state)) continue;
-            Object nameRaw = state.get("Name");
-            if (!(nameRaw instanceof String name)) continue;
-            Object propertiesRaw = state.get("Properties");
-            Map<String, String> props = propertiesRaw instanceof Map<?, ?> propsMap ? readProperties(propsMap) : Map.of();
-            palette.add(SchematicBlockState.of(name, props));
-        }
-        return List.copyOf(palette);
     }
 
     private Map<String, String> readProperties(Map<?, ?> properties) {
@@ -241,11 +251,55 @@ final class LitematicParser {
 
     record ParseResult(Map<LoadedSchematic.BlockPosition, SchematicBlockState> blocks, Map<String, String> metadata, LoadedSchematic.SchematicStats stats) {}
 
-    private static final class ParseAccumulator {
-        private final Map<LoadedSchematic.BlockPosition, SchematicBlockState> blocks = new LinkedHashMap<>();
-        private int regionCount;
-        private int paletteEntries;
-        private int airBlocks;
+    static final class ParseAccumulator {
+        final Map<LoadedSchematic.BlockPosition, SchematicBlockState> blocks = new LinkedHashMap<>();
+        int regionCount;
+        int paletteEntries;
+        int airBlocks;
+    }
+
+    record RegionModel(String name, RegionVolume volume, PaletteModel palette, long[] blockStates) {}
+
+    record PaletteModel(List<SchematicBlockState> entries) {
+        int size() {
+            return entries.size();
+        }
+
+        int bitsPerBlock() {
+            return Math.max(2, 32 - Integer.numberOfLeadingZeros(Math.max(1, entries.size() - 1)));
+        }
+
+        SchematicBlockState entry(int index) {
+            return entries.get(index);
+        }
+    }
+
+    record RegionVolume(int startX, int startY, int startZ, int sizeX, int sizeY, int sizeZ) {
+        static RegionVolume from(Vec3 position, Vec3 size) {
+            int sx = Math.abs(size.x());
+            int sy = Math.abs(size.y());
+            int sz = Math.abs(size.z());
+
+            int startX = size.x() >= 0 ? position.x() : position.x() + size.x() + 1;
+            int startY = size.y() >= 0 ? position.y() : position.y() + size.y() + 1;
+            int startZ = size.z() >= 0 ? position.z() : position.z() + size.z() + 1;
+            return new RegionVolume(startX, startY, startZ, sx, sy, sz);
+        }
+
+        boolean isEmpty() {
+            return sizeX == 0 || sizeY == 0 || sizeZ == 0;
+        }
+
+        int blockCount() {
+            return sizeX * sizeY * sizeZ;
+        }
+
+        LoadedSchematic.BlockPosition worldPosition(int index) {
+            int x = index % sizeX;
+            int z = (index / sizeX) % sizeZ;
+            int y = index / (sizeX * sizeZ);
+            return new LoadedSchematic.BlockPosition(startX + x, startY + y, startZ + z);
+        }
     }
 
     private record NbtTag(NbtType type, String name, Object value) {}

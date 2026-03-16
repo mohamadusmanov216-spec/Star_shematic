@@ -19,6 +19,28 @@ SBuild — это архитектурная база для будущего AI
 - Командный root `/sbuild`
 - Система placement-стратегий для сложных блоков
 - Подсистема redstone-графа и проверки схем
+- Надёжный pipeline трансформаций схематики (mirror + rotation + offset) с покрытием edge-case комбинаций
+- Domain-индексы для загруженной схематики (по слоям и по block-state ключам)
+- Более явная модель парсинга `.litematic`: отдельные шаги region model / palette model / packed block decode
+
+---
+
+## 🧠 Schematic engine (текущая модель)
+
+Подсистема `schematic` теперь организована так, чтобы сложные случаи было проще тестировать и сопровождать:
+
+- `SchematicTransform` работает через локальный frame (normalization/denormalization) и явные этапы `mirror -> rotation -> offset`.
+- `LoadedSchematic` хранит исходную map блоков и одновременно строит доменный `BlockDomain`:
+  - индексы по `y`-слоям,
+  - агрегированные требования по состояниям блоков,
+  - lookup позиций по `block-state` ключу.
+- `LitematicParser` разбит на тестируемые модели:
+  - `RegionVolume` (геометрия региона),
+  - `PaletteModel` (палитра и bits-per-block),
+  - `RegionModel` (связка volume + palette + packed states),
+  - явный decode в блоки мира.
+
+Это всё ещё pragmatic-engine, а не «идеальный final domain engine», но архитектура уже заметно более предсказуема для тонких комбинаций и регрессий.
 
 ---
 
