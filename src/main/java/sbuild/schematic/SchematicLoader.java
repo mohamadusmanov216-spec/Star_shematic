@@ -32,7 +32,7 @@ public final class SchematicLoader {
         FileTime lastModifiedTime = Files.getLastModifiedTime(normalized);
         Instant lastModified = lastModifiedTime.toInstant();
 
-        LitematicParser.ParseResult parsed = parse(normalized);
+        LitematicModelDecoder.ParseResult parsed = parse(normalized);
         SchematicBoundingBox boundingBox = SchematicBoundingBox.fromPositions(parsed.blocks().keySet());
 
         Map<String, String> metadata = new HashMap<>(parsed.metadata());
@@ -63,8 +63,17 @@ public final class SchematicLoader {
         }
     }
 
-    private LitematicParser.ParseResult parse(Path path) throws IOException {
+    private LitematicModelDecoder.ParseResult parse(Path path) throws IOException {
         Objects.requireNonNull(path, "path");
-        return parser.parse(path);
+        try {
+            return parser.parse(path);
+        } catch (SchematicParseException e) {
+            throw new SchematicParseException(
+                e.reasonCode(),
+                "Failed to parse litematic '" + path.getFileName() + "': " + e.getMessage(),
+                e.context(),
+                e
+            );
+        }
     }
 }
