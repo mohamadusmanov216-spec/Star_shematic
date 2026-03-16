@@ -3,7 +3,7 @@ package sbuild.command;
 import com.mojang.brigadier.context.CommandContext;
 import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.text.Text;
-import sbuild.state.AppContext;
+import sbuild.state.BuildStateService;
 
 /**
  * Handles all command execution logic for /sbuild commands.
@@ -12,20 +12,19 @@ import sbuild.state.AppContext;
  * are implemented.</p>
  */
 public final class SBuildCommandHandler {
-    private final AppContext context;
+    private final BuildStateService buildStateService;
 
-    public SBuildCommandHandler(AppContext context) {
-        this.context = context;
+    public SBuildCommandHandler(BuildStateService buildStateService) {
+        this.buildStateService = buildStateService;
     }
 
     public int handleRoot(CommandContext<ServerCommandSource> commandContext) {
-        context.commandService(); // Ensures command module dependency is part of execution path.
         commandContext.getSource().sendFeedback(() -> Text.literal("SBuild initialized. Use /sbuild help."), false);
         return 1;
     }
 
     public int handleStatus(CommandContext<ServerCommandSource> commandContext) {
-        boolean hasActiveBuild = context.buildStateService().hasActiveBuild();
+        boolean hasActiveBuild = buildStateService.hasActiveBuild();
         String message = hasActiveBuild ? "SBuild status: build in progress." : "SBuild status: idle.";
         commandContext.getSource().sendFeedback(() -> Text.literal(message), false);
         return 1;

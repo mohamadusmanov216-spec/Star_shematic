@@ -15,15 +15,13 @@ public final class ModuleBootstrap {
     }
 
     /**
-     * Initializes all registered modules in predictable order.
+     * Initializes server-safe core modules in predictable order.
      */
-    public void initializeModules() {
+    public void initializeCoreModules() {
         context.configService().initialize();
         context.commandService().initialize();
         context.buildStateService().initialize();
         context.schematicService().initialize();
-        context.guiService().initialize();
-        context.renderService().initialize();
         context.worldService().initialize();
         context.materialAnalysisService().initialize();
         context.storageService().initialize();
@@ -33,5 +31,13 @@ public final class ModuleBootstrap {
         context.blockPlacementService().initialize();
         context.buildBotService().initialize();
         context.utilityService().initialize();
+    }
+
+    /**
+     * Initializes client-only modules.
+     */
+    public void initializeClientModules() {
+        context.guiService().initialize();
+        context.renderService().initialize();
     }
 }

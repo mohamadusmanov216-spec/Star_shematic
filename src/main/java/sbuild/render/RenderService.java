@@ -7,7 +7,9 @@ import sbuild.state.BuildStateService;
  * Handles client-side visualization, including ghost blocks and overlays.
  */
 public final class RenderService {
+    @SuppressWarnings("unused")
     private final SchematicService schematicService;
+    @SuppressWarnings("unused")
     private final BuildStateService buildStateService;
 
     public RenderService(SchematicService schematicService, BuildStateService buildStateService) {
@@ -17,13 +19,5 @@ public final class RenderService {
 
     public void initialize() {
         // Stub: renderer hooks will be implemented later.
-    }
-
-    public SchematicService schematicService() {
-        return schematicService;
-    }
-
-    public BuildStateService buildStateService() {
-        return buildStateService;
     }
 }

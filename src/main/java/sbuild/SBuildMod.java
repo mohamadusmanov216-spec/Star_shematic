@@ -1,6 +1,8 @@
 package sbuild;
 
 import net.fabricmc.api.ModInitializer;
+import net.fabricmc.loader.api.FabricLoader;
+import net.fabricmc.api.EnvType;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -77,12 +79,15 @@ public final class SBuildMod implements ModInitializer {
         );
 
         ModuleBootstrap bootstrap = new ModuleBootstrap(context);
-        bootstrap.initializeModules();
+        bootstrap.initializeCoreModules();
+        if (FabricLoader.getInstance().getEnvironmentType() == EnvType.CLIENT) {
+            bootstrap.initializeClientModules();
+        }
         return context;
     }
 
     private void registerCommands(AppContext context) {
-        SBuildCommandHandler handler = new SBuildCommandHandler(context);
+        SBuildCommandHandler handler = new SBuildCommandHandler(context.buildStateService());
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
             SBuildCommand.register(dispatcher, handler)
         );
