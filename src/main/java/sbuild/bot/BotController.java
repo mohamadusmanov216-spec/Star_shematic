@@ -9,6 +9,7 @@ import net.minecraft.util.math.BlockPos;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -22,6 +23,7 @@ public final class BotController {
     private static final int SCAFFOLD_TIMEOUT_TICKS = 30;
     private static final int LOOK_TIMEOUT_TICKS = 10;
     private static final int MAX_RETRIES = 2;
+    private static final int MAX_QUEUED_ACTIONS = 512;
 
     private final PathExecutor pathExecutor;
     private final LookController lookController;
@@ -58,33 +60,27 @@ public final class BotController {
     }
 
     public void enqueueMoveTo(ServerPlayerEntity player, BlockPos target) {
-        BotRuntime runtime = runtime(player);
-        runtime.actions.add(new MoveAction(target.toImmutable()));
+        enqueue(player, new MoveAction(target.toImmutable()));
     }
 
     public void enqueueRotateTo(ServerPlayerEntity player, BlockPos target) {
-        BotRuntime runtime = runtime(player);
-        runtime.actions.add(new LookAction(target.toImmutable()));
+        enqueue(player, new LookAction(target.toImmutable()));
     }
 
     public void enqueuePlaceBlock(ServerPlayerEntity player, BlockPos target, Block block) {
-        BotRuntime runtime = runtime(player);
-        runtime.actions.add(new PlaceAction(target.toImmutable(), block));
+        enqueue(player, new PlaceAction(target.toImmutable(), Objects.requireNonNull(block, "block")));
     }
 
     public void enqueueBreakBlock(ServerPlayerEntity player, BlockPos target) {
-        BotRuntime runtime = runtime(player);
-        runtime.actions.add(new BreakAction(target.toImmutable()));
+        enqueue(player, new BreakAction(target.toImmutable()));
     }
 
     public void enqueueScaffold(ServerPlayerEntity player, Block scaffoldBlock) {
-        BotRuntime runtime = runtime(player);
-        runtime.actions.add(new ScaffoldAction(scaffoldBlock));
+        enqueue(player, new ScaffoldAction(Objects.requireNonNull(scaffoldBlock, "scaffoldBlock")));
     }
 
     public void enqueueTowerBuild(ServerPlayerEntity player, int targetY, Block scaffoldBlock) {
-        BotRuntime runtime = runtime(player);
-        runtime.actions.add(new TowerAction(targetY, scaffoldBlock));
+        enqueue(player, new TowerAction(targetY, Objects.requireNonNull(scaffoldBlock, "scaffoldBlock")));
     }
 
     public BotState state(ServerPlayerEntity player) {
@@ -93,20 +89,15 @@ public final class BotController {
 
     public void clearTasks(ServerPlayerEntity player) {
         BotRuntime runtime = runtime(player);
-        runtime.actions.clear();
-        runtime.path.clear();
-        ServerWorld world = player.getWorld();
-        runtime.guard.reset(world.getTime());
-        runtime.state = BotState.idle(world.getTime());
+        resetRuntime(player, runtime);
     }
 
     public void tickAll(MinecraftServer server) {
         for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
             BotRuntime runtime = runtimes.get(player.getUuid());
-            if (runtime == null) {
-                continue;
+            if (runtime != null) {
+                tickRuntime(player.getWorld(), player, runtime);
             }
-            tickRuntime(player.getWorld(), player, runtime);
         }
     }
 
@@ -133,41 +124,29 @@ public final class BotController {
                 runtime.actions.poll();
                 runtime.path.clear();
                 runtime.guard.reset(world.getTime());
+                runtime.state = runtime.actions.isEmpty()
+                    ? BotState.idle(world.getTime())
+                    : runtime.state.with(BotState.Status.IDLE, null, "queued-next", world.getTime());
                 return;
             }
 
-            if (runtime.guard.isTimedOut(world.getTime(), timeoutTicks(action))) {
-                handleActionFailure(player, runtime, "action-timeout");
+            if (runtime.guard.isTimedOut(world.getTime(), action.timeoutTicks())) {
+                handleActionFailure(player, runtime, action, "action-timeout");
             }
         } catch (RuntimeException exception) {
-            handleActionFailure(player, runtime, exception.getMessage());
+            String reason = exception.getMessage() == null ? action.name() + "-error" : exception.getMessage();
+            handleActionFailure(player, runtime, action, reason);
         }
     }
 
-    private int timeoutTicks(BotAction action) {
-        if (action instanceof MoveAction) {
-            return MOVE_TIMEOUT_TICKS;
-        }
-        if (action instanceof PlaceAction) {
-            return PLACE_TIMEOUT_TICKS;
-        }
-        if (action instanceof BreakAction) {
-            return BREAK_TIMEOUT_TICKS;
-        }
-        if (action instanceof ScaffoldAction || action instanceof TowerAction) {
-            return SCAFFOLD_TIMEOUT_TICKS;
-        }
-        return LOOK_TIMEOUT_TICKS;
-    }
-
-    private void handleActionFailure(ServerPlayerEntity player, BotRuntime runtime, String reason) {
+    private void handleActionFailure(ServerPlayerEntity player, BotRuntime runtime, BotAction action, String reason) {
         BotActionGuard.FailureDecision decision = runtime.guard.onFailure(player.getWorld().getTime());
         if (decision == BotActionGuard.FailureDecision.RETRY) {
             runtime.path.clear();
             runtime.state = runtime.state.with(
                 BotState.Status.RECOVERING,
                 player.getBlockPos(),
-                "retry-" + runtime.guard.retryCount() + ":" + reason,
+                "retry-" + runtime.guard.retryCount() + ":" + action.name() + ":" + reason,
                 player.getWorld().getTime()
             );
             return;
@@ -175,11 +154,29 @@ public final class BotController {
 
         runtime.actions.poll();
         runtime.path.clear();
-        runtime.state = runtime.state.with(BotState.Status.ERROR, player.getBlockPos(), reason, player.getWorld().getTime());
+        runtime.state = runtime.state.with(BotState.Status.ERROR, player.getBlockPos(), action.name() + ":" + reason, player.getWorld().getTime());
     }
 
     private BotRuntime runtime(ServerPlayerEntity player) {
         return runtimes.computeIfAbsent(player.getUuid(), ignored -> new BotRuntime(player.getWorld().getTime()));
+    }
+
+    private void resetRuntime(ServerPlayerEntity player, BotRuntime runtime) {
+        runtime.actions.clear();
+        runtime.path.clear();
+        runtime.guard.reset(player.getWorld().getTime());
+        runtime.state = BotState.idle(player.getWorld().getTime());
+    }
+
+    private void enqueue(ServerPlayerEntity player, BotAction action) {
+        Objects.requireNonNull(player, "player");
+        Objects.requireNonNull(action, "action");
+
+        BotRuntime runtime = runtime(player);
+        if (runtime.actions.size() >= MAX_QUEUED_ACTIONS) {
+            throw new IllegalStateException("Bot action queue is full");
+        }
+        runtime.actions.add(action);
     }
 
     private final class BotRuntime {
@@ -196,6 +193,10 @@ public final class BotController {
 
     private interface BotAction {
         boolean execute(ServerWorld world, ServerPlayerEntity player, BotRuntime runtime, long tick);
+
+        int timeoutTicks();
+
+        String name();
     }
 
     private final class MoveAction implements BotAction {
@@ -208,7 +209,7 @@ public final class BotController {
         @Override
         public boolean execute(ServerWorld world, ServerPlayerEntity player, BotRuntime runtime, long tick) {
             if (!safetyController.isSafeTarget(world, player, target)) {
-                throw new IllegalStateException("Unsafe move target");
+                throw new IllegalStateException("unsafe-move-target");
             }
             if (runtime.path.isEmpty()) {
                 runtime.path.addAll(pathExecutor.createPath(world, player.getBlockPos(), target));
@@ -216,6 +217,16 @@ public final class BotController {
             boolean done = pathExecutor.executeStep(player, runtime.path);
             runtime.state = runtime.state.with(BotState.Status.MOVING, target, "moving", tick);
             return done;
+        }
+
+        @Override
+        public int timeoutTicks() {
+            return MOVE_TIMEOUT_TICKS;
+        }
+
+        @Override
+        public String name() {
+            return "move";
         }
     }
 
@@ -232,6 +243,16 @@ public final class BotController {
             runtime.state = runtime.state.with(BotState.Status.LOOKING, target, "looking", tick);
             return true;
         }
+
+        @Override
+        public int timeoutTicks() {
+            return LOOK_TIMEOUT_TICKS;
+        }
+
+        @Override
+        public String name() {
+            return "look";
+        }
     }
 
     private final class PlaceAction implements BotAction {
@@ -246,14 +267,24 @@ public final class BotController {
         @Override
         public boolean execute(ServerWorld world, ServerPlayerEntity player, BotRuntime runtime, long tick) {
             if (!safetyController.isSafeTarget(world, player, target)) {
-                throw new IllegalStateException("Unsafe placement target");
+                throw new IllegalStateException("unsafe-placement-target");
             }
             if (!inventoryController.selectHotbarBlock(player, block)) {
-                throw new IllegalStateException("Required block is missing in hotbar");
+                throw new IllegalStateException("missing-hotbar-block");
             }
             boolean placed = placeController.placeBlock(world, player, target, block);
             runtime.state = runtime.state.with(BotState.Status.PLACING, target, placed ? "placed" : "placement-failed", tick);
             return placed;
+        }
+
+        @Override
+        public int timeoutTicks() {
+            return PLACE_TIMEOUT_TICKS;
+        }
+
+        @Override
+        public String name() {
+            return "place";
         }
     }
 
@@ -270,6 +301,16 @@ public final class BotController {
             runtime.state = runtime.state.with(BotState.Status.BREAKING, target, done ? "broken" : "break-failed", tick);
             return done;
         }
+
+        @Override
+        public int timeoutTicks() {
+            return BREAK_TIMEOUT_TICKS;
+        }
+
+        @Override
+        public String name() {
+            return "break";
+        }
     }
 
     private final class ScaffoldAction implements BotAction {
@@ -284,6 +325,16 @@ public final class BotController {
             boolean done = jumpScaffoldController.placeScaffoldBelow(world, player, scaffoldBlock);
             runtime.state = runtime.state.with(BotState.Status.SCAFFOLDING, player.getBlockPos(), done ? "scaffold-ready" : "scaffold-failed", tick);
             return done;
+        }
+
+        @Override
+        public int timeoutTicks() {
+            return SCAFFOLD_TIMEOUT_TICKS;
+        }
+
+        @Override
+        public String name() {
+            return "scaffold";
         }
     }
 
@@ -301,6 +352,16 @@ public final class BotController {
             boolean done = towerBuilder.buildStepUp(world, player, targetY, scaffoldBlock);
             runtime.state = runtime.state.with(BotState.Status.SCAFFOLDING, player.getBlockPos(), done ? "tower-complete" : "tower-building", tick);
             return done;
+        }
+
+        @Override
+        public int timeoutTicks() {
+            return SCAFFOLD_TIMEOUT_TICKS;
+        }
+
+        @Override
+        public String name() {
+            return "tower";
         }
     }
 }

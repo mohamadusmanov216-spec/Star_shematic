@@ -5,7 +5,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
 import java.time.Instant;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
@@ -24,6 +24,7 @@ public final class SchematicLoader {
 
     public LoadedSchematic load(Path path) throws IOException {
         Path normalized = path.toAbsolutePath().normalize();
+        validatePath(normalized);
         validateFormat(normalized);
 
         String fileName = normalized.getFileName().toString();
@@ -35,7 +36,7 @@ public final class SchematicLoader {
         LitematicParser.ParseResult parsed = parse(normalized);
         SchematicBoundingBox boundingBox = SchematicBoundingBox.fromPositions(parsed.blocks().keySet());
 
-        Map<String, String> metadata = new HashMap<>(parsed.metadata());
+        Map<String, String> metadata = new LinkedHashMap<>(parsed.metadata());
         metadata.put("fileName", fileName);
         metadata.put("format", "litematic");
         metadata.put("sizeBytes", Long.toString(fileSize));
@@ -54,6 +55,15 @@ public final class SchematicLoader {
             parsed.stats(),
             metadata
         );
+    }
+
+    private void validatePath(Path path) {
+        if (!Files.exists(path) || !Files.isRegularFile(path)) {
+            throw new IllegalArgumentException("Schematic file does not exist: " + path);
+        }
+        if (!Files.isReadable(path)) {
+            throw new IllegalArgumentException("Schematic file is not readable: " + path);
+        }
     }
 
     private void validateFormat(Path path) {

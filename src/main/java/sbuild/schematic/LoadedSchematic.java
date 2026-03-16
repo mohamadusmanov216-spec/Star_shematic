@@ -6,6 +6,7 @@ import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 public record LoadedSchematic(
@@ -22,6 +23,23 @@ public record LoadedSchematic(
     Map<String, String> metadata
 ) {
     public LoadedSchematic {
+        Objects.requireNonNull(id, "id");
+        Objects.requireNonNull(name, "name");
+        Objects.requireNonNull(format, "format");
+        Objects.requireNonNull(sourcePath, "sourcePath");
+        Objects.requireNonNull(lastModified, "lastModified");
+        Objects.requireNonNull(boundingBox, "boundingBox");
+        Objects.requireNonNull(blocks, "blocks");
+        Objects.requireNonNull(stats, "stats");
+        Objects.requireNonNull(metadata, "metadata");
+
+        if (id.isBlank() || name.isBlank() || format.isBlank()) {
+            throw new IllegalArgumentException("id/name/format must be non-blank");
+        }
+        if (fileSizeBytes < 0L) {
+            throw new IllegalArgumentException("fileSizeBytes cannot be negative");
+        }
+
         blocks = Map.copyOf(blocks);
         domain = domain == null ? BlockDomain.fromBlocks(blocks) : domain;
         metadata = Map.copyOf(metadata);
@@ -117,7 +135,17 @@ public record LoadedSchematic(
         public BlockPosition add(int dx, int dy, int dz) {
             return new BlockPosition(x + dx, y + dy, z + dz);
         }
+
+        public int manhattanDistance(BlockPosition other) {
+            return Math.abs(x - other.x) + Math.abs(y - other.y) + Math.abs(z - other.z);
+        }
     }
 
-    public record SchematicStats(int regionCount, int paletteEntries, int airBlocks, int solidBlocks) {}
+    public record SchematicStats(int regionCount, int paletteEntries, int airBlocks, int solidBlocks) {
+        public SchematicStats {
+            if (regionCount < 0 || paletteEntries < 0 || airBlocks < 0 || solidBlocks < 0) {
+                throw new IllegalArgumentException("Schematic stats cannot be negative");
+            }
+        }
+    }
 }

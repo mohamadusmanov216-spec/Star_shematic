@@ -5,7 +5,7 @@ import net.minecraft.server.world.ServerWorld;
 import sbuild.materials.MaterialAvailability;
 import sbuild.materials.MaterialReport;
 
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -33,17 +33,24 @@ public final class StorageService {
     }
 
     public MaterialAvailability aggregateAvailability(ServerWorld world) {
-        Map<String, Long> total = new HashMap<>();
-        for (StoragePoint point : listStoragePoints()) {
-            Map<String, Long> scanned = scanStoragePoint(point, world);
-            for (Map.Entry<String, Long> entry : scanned.entrySet()) {
-                total.merge(entry.getKey(), entry.getValue(), Long::sum);
-            }
+        Map<String, Long> total = new LinkedHashMap<>();
+        List<StoragePoint> points = listStoragePoints();
+        for (StoragePoint point : points) {
+            mergeAvailability(total, scanStoragePoint(point, world));
         }
         return new MaterialAvailability(total);
     }
 
     public RestockPlanner.RestockPlan planRestock(MaterialReport report) {
         return restockPlanner.buildPlan(report);
+    }
+
+    private void mergeAvailability(Map<String, Long> total, Map<String, Long> scanned) {
+        for (Map.Entry<String, Long> entry : scanned.entrySet()) {
+            if (entry.getValue() <= 0) {
+                continue;
+            }
+            total.merge(entry.getKey(), entry.getValue(), Long::sum);
+        }
     }
 }

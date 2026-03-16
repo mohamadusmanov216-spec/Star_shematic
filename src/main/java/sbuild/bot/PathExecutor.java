@@ -136,7 +136,7 @@ public final class PathExecutor {
     }
 
     private List<BlockPos> neighbors(BlockPos pos) {
-        List<BlockPos> result = new ArrayList<>(10);
+        List<BlockPos> result = new ArrayList<>(14);
         int x = pos.getX();
         int y = pos.getY();
         int z = pos.getZ();
@@ -145,6 +145,8 @@ public final class PathExecutor {
         result.add(new BlockPos(x - 1, y, z));
         result.add(new BlockPos(x, y, z + 1));
         result.add(new BlockPos(x, y, z - 1));
+        result.add(new BlockPos(x, y + 1, z));
+        result.add(new BlockPos(x, y - 1, z));
         result.add(new BlockPos(x + 1, y + 1, z));
         result.add(new BlockPos(x - 1, y + 1, z));
         result.add(new BlockPos(x, y + 1, z + 1));

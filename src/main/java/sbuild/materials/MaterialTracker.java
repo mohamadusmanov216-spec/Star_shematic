@@ -4,26 +4,22 @@ import sbuild.schematic.LoadedSchematic;
 import sbuild.schematic.PlacementController;
 import sbuild.schematic.SchematicBlockState;
 
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 
 /**
- * Считает необходимые материалы и сравнивает их с миром/инвентарем.
+ * Calculates required/built/remaining materials from transformed placement data.
  */
 public final class MaterialTracker {
+    private static final String AIR_ITEM = "minecraft:air";
+
     private final ItemResolver itemResolver;
 
     public MaterialTracker(ItemResolver itemResolver) {
         this.itemResolver = itemResolver;
     }
 
-    /**
-     * Анализ по уже трансформированному размещению.
-     *
-     * @param placedWorldBlocks snapshot блоков мира по world-позициям
-     * @param availability snapshot инвентаря/доступных ресурсов
-     */
     public MaterialReport analyze(
         PlacementController placement,
         Map<LoadedSchematic.BlockPosition, String> placedWorldBlocks,
@@ -33,13 +29,13 @@ public final class MaterialTracker {
         Objects.requireNonNull(placedWorldBlocks, "placedWorldBlocks");
         Objects.requireNonNull(availability, "availability");
 
-        Map<String, Long> requiredByMaterial = new HashMap<>();
-        Map<String, Long> builtByMaterial = new HashMap<>();
+        Map<String, Long> requiredByMaterial = new LinkedHashMap<>();
+        Map<String, Long> builtByMaterial = new LinkedHashMap<>();
 
         for (Map.Entry<LoadedSchematic.BlockPosition, SchematicBlockState> requiredEntry : placement.transformedEntries()) {
             SchematicBlockState requiredState = requiredEntry.getValue();
             String requiredMaterial = itemResolver.resolveItemKey(requiredState.key());
-            if (requiredState.isAir() || "minecraft:air".equals(requiredMaterial)) {
+            if (requiredState.isAir() || AIR_ITEM.equals(requiredMaterial)) {
                 continue;
             }
             increment(requiredByMaterial, requiredMaterial, 1L);
@@ -55,12 +51,13 @@ public final class MaterialTracker {
             }
         }
 
+        if (requiredByMaterial.isEmpty()) {
+            return MaterialReport.empty();
+        }
+
         return buildReport(requiredByMaterial, builtByMaterial, availability);
     }
 
-    /**
-     * Упрощённый анализ без проверки мира (для предварительной сметы).
-     */
     public MaterialReport analyzeRequiredOnly(PlacementController placement, MaterialAvailability availability) {
         return analyze(placement, Map.of(), availability);
     }
@@ -70,7 +67,7 @@ public final class MaterialTracker {
         Map<String, Long> builtByMaterial,
         MaterialAvailability availability
     ) {
-        Map<String, MaterialRequirement> rows = new HashMap<>();
+        Map<String, MaterialRequirement> rows = new LinkedHashMap<>();
         long totalRequired = 0L;
         long totalBuilt = 0L;
         long totalRemaining = 0L;
@@ -80,18 +77,10 @@ public final class MaterialTracker {
             String material = requiredEntry.getKey();
             long required = requiredEntry.getValue();
             long built = Math.min(required, builtByMaterial.getOrDefault(material, 0L));
-            long remaining = Math.max(0L, required - built);
+            long remaining = required - built;
             long available = availability.countOf(material);
 
-            MaterialRequirement requirement = new MaterialRequirement(
-                material,
-                required,
-                built,
-                remaining,
-                available
-            );
-
-            rows.put(material, requirement);
+            rows.put(material, new MaterialRequirement(material, required, built, remaining, available));
             totalRequired += required;
             totalBuilt += built;
             totalRemaining += remaining;

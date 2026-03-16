@@ -5,6 +5,7 @@ import net.fabricmc.loader.api.FabricLoader;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -55,25 +56,25 @@ public final class SchematicRepository {
 
     public LoadedSchematic load(Path path) {
         Path normalized = path.toAbsolutePath().normalize();
-        return cacheByPath.computeIfAbsent(normalized, key -> {
-            try {
-                LoadedSchematic loaded = loader.load(key);
-                pathByName.put(loaded.name().toLowerCase(Locale.ROOT), key);
-                return loaded;
-            } catch (IOException e) {
-                throw new IllegalStateException("Unable to load schematic: " + key, e);
+        return cacheByPath.compute(normalized, (key, cached) -> {
+            if (cached != null && !isFileChanged(cached)) {
+                return cached;
             }
+            LoadedSchematic loaded = loadUnchecked(key);
+            pathByName.put(loaded.name().toLowerCase(Locale.ROOT), key);
+            return loaded;
         });
     }
 
     public Optional<LoadedSchematic> loadByName(String name) {
-        Path path = pathByName.get(name.toLowerCase(Locale.ROOT));
+        String normalized = normalizeName(name);
+        Path path = pathByName.get(normalized);
         if (path != null) {
             return Optional.of(load(path));
         }
+
         for (Path candidate : scan()) {
-            String base = baseName(candidate).toLowerCase(Locale.ROOT);
-            if (base.equals(name.toLowerCase(Locale.ROOT))) {
+            if (baseName(candidate).equalsIgnoreCase(normalized)) {
                 return Optional.of(load(candidate));
             }
         }
@@ -97,6 +98,31 @@ public final class SchematicRepository {
         pathByName.clear();
     }
 
+    private LoadedSchematic loadUnchecked(Path key) {
+        try {
+            return loader.load(key);
+        } catch (IOException e) {
+            throw new IllegalStateException("Unable to load schematic: " + key, e);
+        }
+    }
+
+    private boolean isFileChanged(LoadedSchematic cached) {
+        try {
+            Path sourcePath = cached.sourcePath();
+            if (!Files.exists(sourcePath)) {
+                return true;
+            }
+            long currentSize = Files.size(sourcePath);
+            if (currentSize != cached.fileSizeBytes()) {
+                return true;
+            }
+            FileTime currentModified = Files.getLastModifiedTime(sourcePath);
+            return !currentModified.toInstant().equals(cached.lastModified());
+        } catch (IOException e) {
+            return true;
+        }
+    }
+
     private void ensureRootExists() {
         try {
             Files.createDirectories(rootDirectory);
@@ -109,6 +135,10 @@ public final class SchematicRepository {
         for (Path path : paths) {
             pathByName.put(baseName(path).toLowerCase(Locale.ROOT), path);
         }
+    }
+
+    private String normalizeName(String name) {
+        return name == null ? "" : name.trim().toLowerCase(Locale.ROOT);
     }
 
     private String baseName(Path path) {

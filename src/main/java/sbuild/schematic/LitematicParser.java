@@ -19,7 +19,7 @@ final class LitematicParser {
              DataInputStream input = new DataInputStream(gzipInput)) {
 
             NbtTag root = readNamedTag(input);
-            if (!(root.value() instanceof Map<?, ?> rootMap)) {
+            if (root.type() != NbtType.COMPOUND || !(root.value() instanceof Map<?, ?> rootMap)) {
                 throw new IllegalArgumentException("Invalid litematic root for " + path.getFileName());
             }
 
@@ -125,7 +125,11 @@ final class LitematicParser {
             throw new IllegalArgumentException("Region has empty size: " + regionName);
         }
 
-        int requiredLongs = (int) Math.ceil((double) ((long) volume.blockCount() * palette.bitsPerBlock()) / 64D);
+        long packedBits = (long) volume.blockCount() * palette.bitsPerBlock();
+        if (packedBits < 0 || packedBits > (long) Integer.MAX_VALUE * 64L) {
+            throw new IllegalArgumentException("Region is too large to decode safely: " + regionName);
+        }
+        int requiredLongs = (int) ((packedBits + 63L) / 64L);
         if (blockStates.length < requiredLongs) {
             throw new IllegalArgumentException("Region has truncated block states: " + regionName);
         }
@@ -189,10 +193,13 @@ final class LitematicParser {
 
     private NbtTag readNamedTag(DataInputStream in) throws IOException {
         byte typeId = in.readByte();
-        if (typeId == 0) return new NbtTag(NbtType.END, "", null);
+        if (typeId == 0) {
+            return new NbtTag(NbtType.END, "", null);
+        }
+        NbtType type = NbtType.fromId(typeId);
         String name = in.readUTF();
-        Object payload = readPayload(in, NbtType.fromId(typeId));
-        return new NbtTag(NbtType.fromId(typeId), name, payload);
+        Object payload = readPayload(in, type);
+        return new NbtTag(type, name, payload);
     }
 
     private Object readPayload(DataInputStream in, NbtType type) throws IOException {
@@ -216,13 +223,17 @@ final class LitematicParser {
             case INT_ARRAY -> {
                 int len = in.readInt();
                 int[] data = new int[len];
-                for (int i = 0; i < len; i++) data[i] = in.readInt();
+                for (int i = 0; i < len; i++) {
+                    data[i] = in.readInt();
+                }
                 yield data;
             }
             case LONG_ARRAY -> {
                 int len = in.readInt();
                 long[] data = new long[len];
-                for (int i = 0; i < len; i++) data[i] = in.readLong();
+                for (int i = 0; i < len; i++) {
+                    data[i] = in.readLong();
+                }
                 yield data;
             }
         };
@@ -231,8 +242,10 @@ final class LitematicParser {
     private List<Object> readList(DataInputStream in) throws IOException {
         NbtType elementType = NbtType.fromId(in.readByte());
         int len = in.readInt();
-        List<Object> out = new ArrayList<>(len);
-        for (int i = 0; i < len; i++) out.add(readPayload(in, elementType));
+        List<Object> out = new ArrayList<>(Math.max(0, len));
+        for (int i = 0; i < len; i++) {
+            out.add(readPayload(in, elementType));
+        }
         return out;
     }
 
@@ -241,7 +254,9 @@ final class LitematicParser {
         while (true) {
             byte typeId = in.readByte();
             NbtType type = NbtType.fromId(typeId);
-            if (type == NbtType.END) break;
+            if (type == NbtType.END) {
+                break;
+            }
             String key = in.readUTF();
             Object value = readPayload(in, type);
             out.put(key, value);
@@ -307,9 +322,17 @@ final class LitematicParser {
     private enum NbtType {
         END(0), BYTE(1), SHORT(2), INT(3), LONG(4), FLOAT(5), DOUBLE(6), BYTE_ARRAY(7), STRING(8), LIST(9), COMPOUND(10), INT_ARRAY(11), LONG_ARRAY(12);
         private final int id;
-        NbtType(int id) { this.id = id; }
+
+        NbtType(int id) {
+            this.id = id;
+        }
+
         static NbtType fromId(int id) {
-            for (NbtType type : values()) if (type.id == id) return type;
+            for (NbtType type : values()) {
+                if (type.id == id) {
+                    return type;
+                }
+            }
             throw new IllegalArgumentException("Unsupported NBT tag id: " + id);
         }
     }

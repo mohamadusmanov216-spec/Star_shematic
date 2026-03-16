@@ -6,7 +6,7 @@ import sbuild.schematic.PlacementController;
 import java.util.Map;
 
 /**
- * Фасад material analysis для planner/GUI/commands.
+ * Material analysis entrypoint for commands/planner/UI.
  */
 public final class MaterialAnalysisService {
     private final ItemResolver itemResolver;
@@ -15,10 +15,6 @@ public final class MaterialAnalysisService {
     public MaterialAnalysisService() {
         this.itemResolver = new ItemResolver();
         this.materialTracker = new MaterialTracker(itemResolver);
-    }
-
-    public void initialize() {
-        // Reserved for future cache warmup / external providers.
     }
 
     public MaterialReport analyze(

@@ -9,6 +9,7 @@ import sbuild.ai.AiService;
 import sbuild.materials.MaterialAnalysisService;
 import sbuild.materials.MaterialAvailability;
 import sbuild.materials.MaterialReport;
+import sbuild.materials.MaterialRequirement;
 import sbuild.planner.BuildPlannerService;
 import sbuild.schematic.LoadedSchematic;
 import sbuild.schematic.PlacementController;
@@ -142,16 +143,12 @@ public final class SBuildCommandHandler {
             return 0;
         }
 
-        PlacementController placement = buildState.placement().orElse(null);
+        PlacementController placement = requirePlacement(source);
         if (placement == null) {
-            sendError(source, Text.translatable("command.sbuild.error.no_loaded_schematic"));
             return 0;
         }
 
-        Map<LoadedSchematic.BlockPosition, String> worldStates = worldService.snapshotBlockStates(
-            player.getWorld(),
-            placement.transformedEntries().stream().map(Map.Entry::getKey).toList()
-        );
+        Map<LoadedSchematic.BlockPosition, String> worldStates = snapshotWorldStates(player, placement);
         MaterialAvailability availability = storage.aggregateAvailability(player.getWorld());
         MaterialReport report = materials.analyze(placement, worldStates, availability);
 
@@ -162,9 +159,14 @@ public final class SBuildCommandHandler {
             report.totalRemaining(),
             report.totalAvailableInInventory()
         ));
-        report.rows().stream().limit(MATERIAL_ROWS_PREVIEW).forEach(row ->
+
+        List<MaterialRequirement> rows = report.rows();
+        rows.stream().limit(MATERIAL_ROWS_PREVIEW).forEach(row ->
             sendInfo(source, Text.translatable("command.sbuild.materials.report.row", row.materialKey(), row.remaining(), row.availableInInventory()))
         );
+        if (rows.size() > MATERIAL_ROWS_PREVIEW) {
+            sendInfo(source, Text.translatable("command.sbuild.preview.truncated", rows.size() - MATERIAL_ROWS_PREVIEW));
+        }
         return 1;
     }
 
@@ -174,22 +176,21 @@ public final class SBuildCommandHandler {
             return 0;
         }
 
-        PlacementController placement = buildState.placement().orElse(null);
+        PlacementController placement = requirePlacement(ctx.getSource());
         if (placement == null) {
-            sendError(ctx.getSource(), Text.translatable("command.sbuild.error.no_loaded_schematic"));
             return 0;
         }
 
-        Map<LoadedSchematic.BlockPosition, String> worldStates = worldService.snapshotBlockStates(
-            player.getWorld(),
-            placement.transformedEntries().stream().map(Map.Entry::getKey).toList()
-        );
+        Map<LoadedSchematic.BlockPosition, String> worldStates = snapshotWorldStates(player, placement);
         BuildPlannerService.BuildPlan plan = planner.createPlan(placement, worldStates);
 
         sendInfo(ctx.getSource(), Text.translatable("command.sbuild.planner.preview.summary", plan.tasks().size(), plan.skippedAlreadyCorrect()));
         plan.tasks().stream().limit(PLAN_ROWS_PREVIEW).forEach(task ->
             sendInfo(ctx.getSource(), Text.translatable("command.sbuild.planner.preview.row", task.position().toString(), task.requiredState()))
         );
+        if (plan.tasks().size() > PLAN_ROWS_PREVIEW) {
+            sendInfo(ctx.getSource(), Text.translatable("command.sbuild.preview.truncated", plan.tasks().size() - PLAN_ROWS_PREVIEW));
+        }
         return 1;
     }
 
@@ -222,6 +223,21 @@ public final class SBuildCommandHandler {
             sendInfo(ctx.getSource(), Text.translatable("command.sbuild.chest.list.entry", point.name(), formatPos(point), point.priority()));
         }
         return 1;
+    }
+
+    private PlacementController requirePlacement(ServerCommandSource source) {
+        PlacementController placement = buildState.placement().orElse(null);
+        if (placement == null) {
+            sendError(source, Text.translatable("command.sbuild.error.no_loaded_schematic"));
+        }
+        return placement;
+    }
+
+    private Map<LoadedSchematic.BlockPosition, String> snapshotWorldStates(ServerPlayerEntity player, PlacementController placement) {
+        return worldService.snapshotBlockStates(
+            player.getWorld(),
+            placement.transformedEntries().stream().map(Map.Entry::getKey).toList()
+        );
     }
 
     private ServerPlayerEntity requirePlayer(ServerCommandSource source) {
