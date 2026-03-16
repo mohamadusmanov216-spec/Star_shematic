@@ -16,6 +16,13 @@ import java.util.concurrent.ConcurrentHashMap;
  * High-level orchestrator of bot actions with per-player task queues.
  */
 public final class BotController {
+    private static final int MOVE_TIMEOUT_TICKS = 120;
+    private static final int PLACE_TIMEOUT_TICKS = 30;
+    private static final int BREAK_TIMEOUT_TICKS = 60;
+    private static final int SCAFFOLD_TIMEOUT_TICKS = 30;
+    private static final int LOOK_TIMEOUT_TICKS = 10;
+    private static final int MAX_RETRIES = 2;
+
     private final PathExecutor pathExecutor;
     private final LookController lookController;
     private final InventoryController inventoryController;
@@ -88,7 +95,9 @@ public final class BotController {
         BotRuntime runtime = runtime(player);
         runtime.actions.clear();
         runtime.path.clear();
-        runtime.state = BotState.idle(player.getServerWorld().getTime());
+        ServerWorld world = player.getWorld();
+        runtime.guard.reset(world.getTime());
+        runtime.state = BotState.idle(world.getTime());
     }
 
     public void tickAll(MinecraftServer server) {
@@ -97,46 +106,91 @@ public final class BotController {
             if (runtime == null) {
                 continue;
             }
-            tickRuntime(player.getServerWorld(), player, runtime);
+            tickRuntime(player.getWorld(), player, runtime);
         }
     }
 
     private void tickRuntime(ServerWorld world, ServerPlayerEntity player, BotRuntime runtime) {
         if (safetyController.shouldRecover(player)) {
             recoveryController.recover(world, player);
+            runtime.guard.reset(world.getTime());
             runtime.state = runtime.state.with(BotState.Status.RECOVERING, player.getBlockPos(), "recovering", world.getTime());
             return;
         }
 
         BotAction action = runtime.actions.peek();
         if (action == null) {
+            runtime.guard.reset(world.getTime());
             runtime.state = BotState.idle(world.getTime());
             return;
         }
+
+        runtime.guard.begin(action, world.getTime());
 
         try {
             boolean done = action.execute(world, player, runtime, world.getTime());
             if (done) {
                 runtime.actions.poll();
+                runtime.path.clear();
+                runtime.guard.reset(world.getTime());
+                return;
+            }
+
+            if (runtime.guard.isTimedOut(world.getTime(), timeoutTicks(action))) {
+                handleActionFailure(player, runtime, "action-timeout");
             }
         } catch (RuntimeException exception) {
-            runtime.actions.clear();
-            runtime.path.clear();
-            runtime.state = runtime.state.with(BotState.Status.ERROR, player.getBlockPos(), exception.getMessage(), world.getTime());
+            handleActionFailure(player, runtime, exception.getMessage());
         }
     }
 
+    private int timeoutTicks(BotAction action) {
+        if (action instanceof MoveAction) {
+            return MOVE_TIMEOUT_TICKS;
+        }
+        if (action instanceof PlaceAction) {
+            return PLACE_TIMEOUT_TICKS;
+        }
+        if (action instanceof BreakAction) {
+            return BREAK_TIMEOUT_TICKS;
+        }
+        if (action instanceof ScaffoldAction || action instanceof TowerAction) {
+            return SCAFFOLD_TIMEOUT_TICKS;
+        }
+        return LOOK_TIMEOUT_TICKS;
+    }
+
+    private void handleActionFailure(ServerPlayerEntity player, BotRuntime runtime, String reason) {
+        BotActionGuard.FailureDecision decision = runtime.guard.onFailure(player.getWorld().getTime());
+        if (decision == BotActionGuard.FailureDecision.RETRY) {
+            runtime.path.clear();
+            runtime.state = runtime.state.with(
+                BotState.Status.RECOVERING,
+                player.getBlockPos(),
+                "retry-" + runtime.guard.retryCount() + ":" + reason,
+                player.getWorld().getTime()
+            );
+            return;
+        }
+
+        runtime.actions.poll();
+        runtime.path.clear();
+        runtime.state = runtime.state.with(BotState.Status.ERROR, player.getBlockPos(), reason, player.getWorld().getTime());
+    }
+
     private BotRuntime runtime(ServerPlayerEntity player) {
-        return runtimes.computeIfAbsent(player.getUuid(), ignored -> new BotRuntime(player.getServerWorld().getTime()));
+        return runtimes.computeIfAbsent(player.getUuid(), ignored -> new BotRuntime(player.getWorld().getTime()));
     }
 
     private final class BotRuntime {
         private final Deque<BotAction> actions = new ArrayDeque<>();
         private final Deque<BlockPos> path = new ArrayDeque<>();
+        private final BotActionGuard guard;
         private BotState state;
 
         private BotRuntime(long tick) {
             this.state = BotState.idle(tick);
+            this.guard = new BotActionGuard(MAX_RETRIES, tick);
         }
     }
 
@@ -157,7 +211,7 @@ public final class BotController {
                 throw new IllegalStateException("Unsafe move target");
             }
             if (runtime.path.isEmpty()) {
-                runtime.path.addAll(pathExecutor.createPath(player.getBlockPos(), target));
+                runtime.path.addAll(pathExecutor.createPath(world, player.getBlockPos(), target));
             }
             boolean done = pathExecutor.executeStep(player, runtime.path);
             runtime.state = runtime.state.with(BotState.Status.MOVING, target, "moving", tick);

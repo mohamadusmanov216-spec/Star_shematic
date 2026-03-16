@@ -149,10 +149,10 @@ public final class SBuildCommandHandler {
         }
 
         Map<LoadedSchematic.BlockPosition, String> worldStates = worldService.snapshotBlockStates(
-            player.getServerWorld(),
+            player.getWorld(),
             placement.transformedEntries().stream().map(Map.Entry::getKey).toList()
         );
-        MaterialAvailability availability = storage.aggregateAvailability(player.getServerWorld());
+        MaterialAvailability availability = storage.aggregateAvailability(player.getWorld());
         MaterialReport report = materials.analyze(placement, worldStates, availability);
 
         sendInfo(source, Text.translatable(
@@ -181,7 +181,7 @@ public final class SBuildCommandHandler {
         }
 
         Map<LoadedSchematic.BlockPosition, String> worldStates = worldService.snapshotBlockStates(
-            player.getServerWorld(),
+            player.getWorld(),
             placement.transformedEntries().stream().map(Map.Entry::getKey).toList()
         );
         BuildPlannerService.BuildPlan plan = planner.createPlan(placement, worldStates);
@@ -200,7 +200,7 @@ public final class SBuildCommandHandler {
             return 0;
         }
         try {
-            ServerWorld world = player.getServerWorld();
+            ServerWorld world = player.getWorld();
             StoragePoint point = storage.registerLookedAtChest(world, player, name);
             sendInfo(source, Text.translatable("command.sbuild.chest.set.success", point.name(), formatPos(point)));
             return 1;
