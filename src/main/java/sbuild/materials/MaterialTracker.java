@@ -2,6 +2,7 @@ package sbuild.materials;
 
 import sbuild.schematic.LoadedSchematic;
 import sbuild.schematic.PlacementController;
+import sbuild.schematic.SchematicBlockState;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -35,10 +36,10 @@ public final class MaterialTracker {
         Map<String, Long> requiredByMaterial = new HashMap<>();
         Map<String, Long> builtByMaterial = new HashMap<>();
 
-        for (Map.Entry<LoadedSchematic.BlockPosition, String> requiredEntry : placement.transformedEntries()) {
-            String requiredBlockState = requiredEntry.getValue();
-            String requiredMaterial = itemResolver.resolveItemKey(requiredBlockState);
-            if ("minecraft:air".equals(requiredMaterial)) {
+        for (Map.Entry<LoadedSchematic.BlockPosition, SchematicBlockState> requiredEntry : placement.transformedEntries()) {
+            SchematicBlockState requiredState = requiredEntry.getValue();
+            String requiredMaterial = itemResolver.resolveItemKey(requiredState.key());
+            if (requiredState.isAir() || "minecraft:air".equals(requiredMaterial)) {
                 continue;
             }
             increment(requiredByMaterial, requiredMaterial, 1L);

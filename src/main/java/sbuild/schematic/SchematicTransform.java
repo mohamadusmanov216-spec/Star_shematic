@@ -1,5 +1,7 @@
 package sbuild.schematic;
 
+import java.util.List;
+
 /**
  * Иммутабельное описание трансформации схематики:
  * поворот, зеркалирование и смещение.
@@ -30,6 +32,20 @@ public record SchematicTransform(
             rotated.y() + bounds.min().y() + offsetY,
             rotated.z() + bounds.min().z() + offsetZ
         );
+    }
+
+    public SchematicBoundingBox transformBounds(SchematicBoundingBox bounds) {
+        List<LoadedSchematic.BlockPosition> transformedCorners = List.of(
+            apply(new LoadedSchematic.BlockPosition(bounds.min().x(), bounds.min().y(), bounds.min().z()), bounds),
+            apply(new LoadedSchematic.BlockPosition(bounds.min().x(), bounds.min().y(), bounds.max().z()), bounds),
+            apply(new LoadedSchematic.BlockPosition(bounds.max().x(), bounds.min().y(), bounds.min().z()), bounds),
+            apply(new LoadedSchematic.BlockPosition(bounds.max().x(), bounds.min().y(), bounds.max().z()), bounds),
+            apply(new LoadedSchematic.BlockPosition(bounds.min().x(), bounds.max().y(), bounds.min().z()), bounds),
+            apply(new LoadedSchematic.BlockPosition(bounds.min().x(), bounds.max().y(), bounds.max().z()), bounds),
+            apply(new LoadedSchematic.BlockPosition(bounds.max().x(), bounds.max().y(), bounds.min().z()), bounds),
+            apply(new LoadedSchematic.BlockPosition(bounds.max().x(), bounds.max().y(), bounds.max().z()), bounds)
+        );
+        return SchematicBoundingBox.fromPositions(transformedCorners);
     }
 
     private LoadedSchematic.BlockPosition applyMirror(LoadedSchematic.BlockPosition position, SchematicBoundingBox bounds) {

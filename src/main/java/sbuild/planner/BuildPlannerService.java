@@ -2,6 +2,7 @@ package sbuild.planner;
 
 import sbuild.schematic.LoadedSchematic;
 import sbuild.schematic.PlacementController;
+import sbuild.schematic.SchematicBlockState;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -19,9 +20,9 @@ public final class BuildPlannerService {
         List<PlacementTask> tasks = new ArrayList<>();
         int skippedAlreadyCorrect = 0;
 
-        for (Map.Entry<LoadedSchematic.BlockPosition, String> entry : placement.transformedEntries()) {
-            String required = entry.getValue();
-            if ("minecraft:air".equals(required)) {
+        for (Map.Entry<LoadedSchematic.BlockPosition, SchematicBlockState> entry : placement.transformedEntries()) {
+            String required = entry.getValue().key();
+            if (entry.getValue().isAir()) {
                 continue;
             }
 

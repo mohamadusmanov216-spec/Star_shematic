@@ -12,6 +12,15 @@ import java.util.Objects;
 
 public final class SchematicLoader {
     private static final String SUPPORTED_EXTENSION = ".litematic";
+    private final LitematicParser parser;
+
+    public SchematicLoader() {
+        this(new LitematicParser());
+    }
+
+    SchematicLoader(LitematicParser parser) {
+        this.parser = parser;
+    }
 
     public LoadedSchematic load(Path path) throws IOException {
         Path normalized = path.toAbsolutePath().normalize();
@@ -24,7 +33,7 @@ public final class SchematicLoader {
         Instant lastModified = lastModifiedTime.toInstant();
 
         LitematicParser.ParseResult parsed = parse(normalized);
-        SchematicBoundingBox boundingBox = computeBoundingBox(parsed.blocks());
+        SchematicBoundingBox boundingBox = SchematicBoundingBox.fromPositions(parsed.blocks().keySet());
 
         Map<String, String> metadata = new HashMap<>(parsed.metadata());
         metadata.put("fileName", fileName);
@@ -55,29 +64,6 @@ public final class SchematicLoader {
 
     private LitematicParser.ParseResult parse(Path path) throws IOException {
         Objects.requireNonNull(path, "path");
-        return new LitematicParser().parse(path);
-    }
-
-    private SchematicBoundingBox computeBoundingBox(Map<LoadedSchematic.BlockPosition, String> blocks) {
-        int minX = Integer.MAX_VALUE;
-        int minY = Integer.MAX_VALUE;
-        int minZ = Integer.MAX_VALUE;
-        int maxX = Integer.MIN_VALUE;
-        int maxY = Integer.MIN_VALUE;
-        int maxZ = Integer.MIN_VALUE;
-
-        for (LoadedSchematic.BlockPosition position : blocks.keySet()) {
-            minX = Math.min(minX, position.x());
-            minY = Math.min(minY, position.y());
-            minZ = Math.min(minZ, position.z());
-            maxX = Math.max(maxX, position.x());
-            maxY = Math.max(maxY, position.y());
-            maxZ = Math.max(maxZ, position.z());
-        }
-
-        return new SchematicBoundingBox(
-            new LoadedSchematic.BlockPosition(minX, minY, minZ),
-            new LoadedSchematic.BlockPosition(maxX, maxY, maxZ)
-        );
+        return parser.parse(path);
     }
 }

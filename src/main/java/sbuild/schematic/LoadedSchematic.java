@@ -15,7 +15,7 @@ public record LoadedSchematic(
     long fileSizeBytes,
     Instant lastModified,
     SchematicBoundingBox boundingBox,
-    Map<BlockPosition, String> blocks,
+    Map<BlockPosition, SchematicBlockState> blocks,
     SchematicStats stats,
     Map<String, String> metadata
 ) {
@@ -24,25 +24,37 @@ public record LoadedSchematic(
         metadata = Map.copyOf(metadata);
     }
 
-    public Optional<String> blockAt(BlockPosition position) {
+    public Optional<SchematicBlockState> blockAt(BlockPosition position) {
         return Optional.ofNullable(blocks.get(position));
+    }
+
+    public Optional<String> blockStateKeyAt(BlockPosition position) {
+        return blockAt(position).map(SchematicBlockState::key);
     }
 
     public int blockCount() {
         return blocks.size();
     }
 
-    public Map<String, Long> requiredBlockStates() {
-        Map<String, Long> counts = new java.util.HashMap<>();
-        for (String state : blocks.values()) {
-            if (!"minecraft:air".equals(state)) {
+    public Map<SchematicBlockState, Long> requiredBlockStates() {
+        Map<SchematicBlockState, Long> counts = new java.util.HashMap<>();
+        for (SchematicBlockState state : blocks.values()) {
+            if (!state.isAir()) {
                 counts.merge(state, 1L, Long::sum);
             }
         }
         return Map.copyOf(counts);
     }
 
-    public Collection<Map.Entry<BlockPosition, String>> entries() {
+    public Map<String, Long> requiredBlockStateKeys() {
+        Map<String, Long> byKey = new java.util.HashMap<>();
+        for (Map.Entry<SchematicBlockState, Long> entry : requiredBlockStates().entrySet()) {
+            byKey.put(entry.getKey().key(), entry.getValue());
+        }
+        return Map.copyOf(byKey);
+    }
+
+    public Collection<Map.Entry<BlockPosition, SchematicBlockState>> entries() {
         return List.copyOf(blocks.entrySet());
     }
 
@@ -52,5 +64,5 @@ public record LoadedSchematic(
         }
     }
 
-    public record SchematicStats(int regionCount, int paletteEntries, int airBlocks) {}
+    public record SchematicStats(int regionCount, int paletteEntries, int airBlocks, int solidBlocks) {}
 }

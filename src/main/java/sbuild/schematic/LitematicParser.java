@@ -6,7 +6,6 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -32,25 +31,26 @@ final class LitematicParser {
 
             ParseAccumulator acc = new ParseAccumulator();
             for (Map.Entry<?, ?> regionEntry : regionsMap.entrySet()) {
-                if (regionEntry.getValue() instanceof Map<?, ?> region) {
-                    readRegion(region, acc);
-                    acc.regionCount++;
+                if (!(regionEntry.getValue() instanceof Map<?, ?> region)) {
+                    continue;
                 }
+                readRegion(region, regionEntry.getKey(), acc);
+                acc.regionCount++;
             }
 
             if (acc.blocks.isEmpty()) {
-                throw new IllegalArgumentException("Litematic contains zero block states: " + path.getFileName());
+                throw new IllegalArgumentException("Litematic contains zero non-air blocks: " + path.getFileName());
             }
 
             return new ParseResult(
                 Map.copyOf(acc.blocks),
                 metadata,
-                new LoadedSchematic.SchematicStats(acc.regionCount, acc.paletteEntries, acc.airBlocks)
+                new LoadedSchematic.SchematicStats(acc.regionCount, acc.paletteEntries, acc.airBlocks, acc.blocks.size())
             );
         }
     }
 
-    private void readRegion(Map<?, ?> region, ParseAccumulator out) {
+    private void readRegion(Map<?, ?> region, Object regionName, ParseAccumulator out) {
         Vec3 pos = readVec3(region.get("Position"));
         Vec3 size = readVec3(region.get("Size"));
 
@@ -65,28 +65,32 @@ final class LitematicParser {
         int startY = size.y() >= 0 ? pos.y() : pos.y() + size.y() + 1;
         int startZ = size.z() >= 0 ? pos.z() : pos.z() + size.z() + 1;
 
-        List<String> palette = readPalette(region.get("BlockStatePalette"));
+        List<SchematicBlockState> palette = readPalette(region.get("BlockStatePalette"));
         long[] blockStates = readLongArray(region.get("BlockStates"));
-        if (palette.isEmpty() || blockStates.length == 0) {
-            return;
+        if (palette.isEmpty()) {
+            throw new IllegalArgumentException("Region has empty palette: " + regionName);
         }
-        out.paletteEntries += palette.size();
 
         int volume = sizeX * sizeY * sizeZ;
-        int bitsPerBlock = Math.max(2, 32 - Integer.numberOfLeadingZeros(Math.max(1, palette.size() - 1)));
+        int bitsPerBlock = bitsPerBlock(palette.size());
+        int requiredLongs = (int) Math.ceil((double) ((long) volume * bitsPerBlock) / 64D);
+        if (blockStates.length < requiredLongs) {
+            throw new IllegalArgumentException("Region has truncated block states: " + regionName);
+        }
+        out.paletteEntries += palette.size();
 
         for (int index = 0; index < volume; index++) {
             int paletteIndex = readPackedValue(blockStates, index, bitsPerBlock);
             if (paletteIndex < 0 || paletteIndex >= palette.size()) {
-                continue;
+                throw new IllegalArgumentException("Palette index out of range in region: " + regionName);
             }
 
             int x = index % sizeX;
             int z = (index / sizeX) % sizeZ;
             int y = index / (sizeX * sizeZ);
 
-            String blockState = palette.get(paletteIndex);
-            if ("minecraft:air".equals(blockState)) {
+            SchematicBlockState blockState = palette.get(paletteIndex);
+            if (blockState.isAir()) {
                 out.airBlocks++;
                 continue;
             }
@@ -94,6 +98,10 @@ final class LitematicParser {
             LoadedSchematic.BlockPosition worldPos = new LoadedSchematic.BlockPosition(startX + x, startY + y, startZ + z);
             out.blocks.put(worldPos, blockState);
         }
+    }
+
+    private int bitsPerBlock(int paletteSize) {
+        return Math.max(2, 32 - Integer.numberOfLeadingZeros(Math.max(1, paletteSize - 1)));
     }
 
     private int readPackedValue(long[] data, int index, int bitsPerValue) {
@@ -110,23 +118,23 @@ final class LitematicParser {
             value |= data[startLong + 1] << (64 - startOffset);
         }
 
-        long mask = (1L << bitsPerValue) - 1L;
+        long mask = bitsPerValue == 64 ? -1L : (1L << bitsPerValue) - 1L;
         return (int) (value & mask);
     }
 
-    private List<String> readPalette(Object value) {
+    private List<SchematicBlockState> readPalette(Object value) {
         if (!(value instanceof List<?> list)) {
             return List.of();
         }
 
-        List<String> palette = new ArrayList<>();
+        List<SchematicBlockState> palette = new ArrayList<>();
         for (Object item : list) {
             if (!(item instanceof Map<?, ?> state)) continue;
             Object nameRaw = state.get("Name");
             if (!(nameRaw instanceof String name)) continue;
             Object propertiesRaw = state.get("Properties");
             Map<String, String> props = propertiesRaw instanceof Map<?, ?> propsMap ? readProperties(propsMap) : Map.of();
-            palette.add(formatState(name, props));
+            palette.add(SchematicBlockState.of(name, props));
         }
         return List.copyOf(palette);
     }
@@ -139,16 +147,6 @@ final class LitematicParser {
             }
         }
         return Map.copyOf(out);
-    }
-
-    private String formatState(String blockName, Map<String, String> properties) {
-        if (properties.isEmpty()) return blockName;
-        String props = properties.entrySet().stream()
-            .sorted(Comparator.comparing(Map.Entry::getKey))
-            .map(entry -> entry.getKey() + "=" + entry.getValue())
-            .reduce((left, right) -> left + "," + right)
-            .orElse("");
-        return blockName + "[" + props + "]";
     }
 
     private long[] readLongArray(Object value) {
@@ -241,14 +239,15 @@ final class LitematicParser {
         return out;
     }
 
-    record ParseResult(Map<LoadedSchematic.BlockPosition, String> blocks, Map<String, String> metadata, LoadedSchematic.SchematicStats stats) {}
+    record ParseResult(Map<LoadedSchematic.BlockPosition, SchematicBlockState> blocks, Map<String, String> metadata, LoadedSchematic.SchematicStats stats) {}
 
     private static final class ParseAccumulator {
-        private final Map<LoadedSchematic.BlockPosition, String> blocks = new LinkedHashMap<>();
+        private final Map<LoadedSchematic.BlockPosition, SchematicBlockState> blocks = new LinkedHashMap<>();
         private int regionCount;
         private int paletteEntries;
         private int airBlocks;
     }
+
     private record NbtTag(NbtType type, String name, Object value) {}
 
     private enum NbtType {

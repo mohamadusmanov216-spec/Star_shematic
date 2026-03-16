@@ -94,6 +94,7 @@ public final class SchematicRepository {
 
     public void clearCache() {
         cacheByPath.clear();
+        pathByName.clear();
     }
 
     private void ensureRootExists() {
