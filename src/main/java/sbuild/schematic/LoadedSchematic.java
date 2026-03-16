@@ -3,6 +3,7 @@ package sbuild.schematic;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -16,11 +17,13 @@ public record LoadedSchematic(
     Instant lastModified,
     SchematicBoundingBox boundingBox,
     Map<BlockPosition, SchematicBlockState> blocks,
+    BlockDomain domain,
     SchematicStats stats,
     Map<String, String> metadata
 ) {
     public LoadedSchematic {
         blocks = Map.copyOf(blocks);
+        domain = domain == null ? BlockDomain.fromBlocks(blocks) : domain;
         metadata = Map.copyOf(metadata);
     }
 
@@ -37,25 +40,77 @@ public record LoadedSchematic(
     }
 
     public Map<SchematicBlockState, Long> requiredBlockStates() {
-        Map<SchematicBlockState, Long> counts = new java.util.HashMap<>();
-        for (SchematicBlockState state : blocks.values()) {
-            if (!state.isAir()) {
-                counts.merge(state, 1L, Long::sum);
-            }
-        }
-        return Map.copyOf(counts);
+        return domain.requiredStates();
     }
 
     public Map<String, Long> requiredBlockStateKeys() {
-        Map<String, Long> byKey = new java.util.HashMap<>();
-        for (Map.Entry<SchematicBlockState, Long> entry : requiredBlockStates().entrySet()) {
-            byKey.put(entry.getKey().key(), entry.getValue());
-        }
-        return Map.copyOf(byKey);
+        return domain.requiredStateKeys();
     }
 
     public Collection<Map.Entry<BlockPosition, SchematicBlockState>> entries() {
         return List.copyOf(blocks.entrySet());
+    }
+
+    public Collection<Map.Entry<BlockPosition, SchematicBlockState>> layerEntries(int y) {
+        return domain.layerEntries(y);
+    }
+
+    public List<BlockPosition> positionsForStateKey(String stateKey) {
+        return domain.positionsForStateKey(stateKey);
+    }
+
+    public record BlockDomain(
+        Map<Integer, Map<BlockPosition, SchematicBlockState>> layers,
+        Map<SchematicBlockState, Long> requiredStates,
+        Map<String, Long> requiredStateKeys,
+        Map<String, List<BlockPosition>> positionsByStateKey
+    ) {
+        static BlockDomain fromBlocks(Map<BlockPosition, SchematicBlockState> blocks) {
+            Map<Integer, Map<BlockPosition, SchematicBlockState>> layers = new LinkedHashMap<>();
+            Map<SchematicBlockState, Long> requiredStates = new LinkedHashMap<>();
+            Map<String, Long> requiredStateKeys = new LinkedHashMap<>();
+            Map<String, List<BlockPosition>> positionsByStateKey = new LinkedHashMap<>();
+
+            for (Map.Entry<BlockPosition, SchematicBlockState> entry : blocks.entrySet()) {
+                BlockPosition position = entry.getKey();
+                SchematicBlockState state = entry.getValue();
+
+                layers.computeIfAbsent(position.y(), ignored -> new LinkedHashMap<>()).put(position, state);
+                if (state.isAir()) {
+                    continue;
+                }
+
+                requiredStates.merge(state, 1L, Long::sum);
+                requiredStateKeys.merge(state.key(), 1L, Long::sum);
+                positionsByStateKey.computeIfAbsent(state.key(), ignored -> new java.util.ArrayList<>()).add(position);
+            }
+
+            Map<Integer, Map<BlockPosition, SchematicBlockState>> immutableLayers = new LinkedHashMap<>();
+            for (Map.Entry<Integer, Map<BlockPosition, SchematicBlockState>> entry : layers.entrySet()) {
+                immutableLayers.put(entry.getKey(), Map.copyOf(entry.getValue()));
+            }
+
+            Map<String, List<BlockPosition>> immutablePositions = new LinkedHashMap<>();
+            for (Map.Entry<String, List<BlockPosition>> entry : positionsByStateKey.entrySet()) {
+                immutablePositions.put(entry.getKey(), List.copyOf(entry.getValue()));
+            }
+
+            return new BlockDomain(
+                Map.copyOf(immutableLayers),
+                Map.copyOf(requiredStates),
+                Map.copyOf(requiredStateKeys),
+                Map.copyOf(immutablePositions)
+            );
+        }
+
+        Collection<Map.Entry<BlockPosition, SchematicBlockState>> layerEntries(int y) {
+            Map<BlockPosition, SchematicBlockState> layer = layers.get(y);
+            return layer == null ? List.of() : List.copyOf(layer.entrySet());
+        }
+
+        List<BlockPosition> positionsForStateKey(String stateKey) {
+            return positionsByStateKey.getOrDefault(stateKey, List.of());
+        }
     }
 
     public record BlockPosition(int x, int y, int z) {

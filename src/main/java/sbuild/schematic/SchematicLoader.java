@@ -50,6 +50,7 @@ public final class SchematicLoader {
             lastModified,
             boundingBox,
             parsed.blocks(),
+            null,
             parsed.stats(),
             metadata
         );
