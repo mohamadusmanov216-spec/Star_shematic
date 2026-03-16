@@ -5,6 +5,7 @@ import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.Text;
+import sbuild.ai.AiService;
 import sbuild.materials.MaterialAnalysisService;
 import sbuild.materials.MaterialAvailability;
 import sbuild.materials.MaterialReport;
@@ -28,6 +29,7 @@ public final class SBuildCommandHandler {
     private final MaterialAnalysisService materials;
     private final StorageService storage;
     private final BuildPlannerService planner;
+    private final AiService aiService;
 
     public SBuildCommandHandler(
         BuildStateService buildState,
@@ -35,7 +37,8 @@ public final class SBuildCommandHandler {
         WorldService worldService,
         MaterialAnalysisService materials,
         StorageService storage,
-        BuildPlannerService planner
+        BuildPlannerService planner,
+        AiService aiService
     ) {
         this.buildState = buildState;
         this.schematics = schematics;
@@ -43,6 +46,7 @@ public final class SBuildCommandHandler {
         this.materials = materials;
         this.storage = storage;
         this.planner = planner;
+        this.aiService = aiService;
     }
 
     public int handleRoot(CommandContext<ServerCommandSource> ctx) {
@@ -63,11 +67,18 @@ public final class SBuildCommandHandler {
             "/sbuild schematic scan|list|load <name>|info",
             "/sbuild materials report",
             "/sbuild chest set <name>|list",
-            "/sbuild planner preview"
+            "/sbuild planner preview",
+            "/ai_help <query>"
         );
         for (String line : lines) {
             ctx.getSource().sendFeedback(() -> Text.literal(line), false);
         }
+        return 1;
+    }
+
+    public int handleAiHelp(CommandContext<ServerCommandSource> ctx, String query) {
+        String response = aiService.respond(query, buildState, storage);
+        ctx.getSource().sendFeedback(() -> Text.literal("AI -> " + response), false);
         return 1;
     }
 
@@ -105,7 +116,8 @@ public final class SBuildCommandHandler {
     public int handleSchematicInfo(CommandContext<ServerCommandSource> ctx) {
         return buildState.loadedSchematic().map(schematic -> {
             ctx.getSource().sendFeedback(() -> Text.literal("name=" + schematic.name() + ", format=" + schematic.format() + ", blocks=" + schematic.blockCount()), false);
-            ctx.getSource().sendFeedback(() -> Text.literal("bbox=" + schematic.boundingBox().min() + " -> " + schematic.boundingBox().max()), false);
+            ctx.getSource().sendFeedback(() -> Text.literal("bbox=" + schematic.boundingBox().min() + " -> " + schematic.boundingBox().max()
+                + ", regions=" + schematic.stats().regionCount() + ", palette=" + schematic.stats().paletteEntries()), false);
             return 1;
         }).orElseGet(() -> {
             ctx.getSource().sendError(Text.literal("no loaded schematic"));

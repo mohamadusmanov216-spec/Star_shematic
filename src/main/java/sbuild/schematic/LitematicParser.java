@@ -13,38 +13,44 @@ import java.util.Map;
 import java.util.TreeMap;
 import java.util.zip.GZIPInputStream;
 
-/**
- * Минимальный парсер .litematic (NBT/GZIP) для извлечения блоков.
- */
 final class LitematicParser {
-    Map<LoadedSchematic.BlockPosition, String> parse(Path path) throws IOException {
+    ParseResult parse(Path path) throws IOException {
         try (InputStream fileInput = Files.newInputStream(path);
              InputStream gzipInput = new GZIPInputStream(fileInput);
              DataInputStream input = new DataInputStream(gzipInput)) {
 
             NbtTag root = readNamedTag(input);
             if (!(root.value() instanceof Map<?, ?> rootMap)) {
-                return Map.of();
+                throw new IllegalArgumentException("Invalid litematic root for " + path.getFileName());
             }
 
-            Object regionsRaw = ((Map<?, ?>) rootMap).get("Regions");
-            if (!(regionsRaw instanceof Map<?, ?> regionsMap)) {
-                return Map.of();
+            Map<String, String> metadata = readMetadata(rootMap.get("Metadata"));
+            Object regionsRaw = rootMap.get("Regions");
+            if (!(regionsRaw instanceof Map<?, ?> regionsMap) || regionsMap.isEmpty()) {
+                throw new IllegalArgumentException("Litematic has no regions: " + path.getFileName());
             }
 
-            Map<LoadedSchematic.BlockPosition, String> blocks = new LinkedHashMap<>();
+            ParseAccumulator acc = new ParseAccumulator();
             for (Map.Entry<?, ?> regionEntry : regionsMap.entrySet()) {
-                if (!(regionEntry.getValue() instanceof Map<?, ?> region)) {
-                    continue;
+                if (regionEntry.getValue() instanceof Map<?, ?> region) {
+                    readRegion(region, acc);
+                    acc.regionCount++;
                 }
-                readRegion(region, blocks);
             }
 
-            return Map.copyOf(blocks);
+            if (acc.blocks.isEmpty()) {
+                throw new IllegalArgumentException("Litematic contains zero block states: " + path.getFileName());
+            }
+
+            return new ParseResult(
+                Map.copyOf(acc.blocks),
+                metadata,
+                new LoadedSchematic.SchematicStats(acc.regionCount, acc.paletteEntries, acc.airBlocks)
+            );
         }
     }
 
-    private void readRegion(Map<?, ?> region, Map<LoadedSchematic.BlockPosition, String> out) {
+    private void readRegion(Map<?, ?> region, ParseAccumulator out) {
         Vec3 pos = readVec3(region.get("Position"));
         Vec3 size = readVec3(region.get("Size"));
 
@@ -64,6 +70,7 @@ final class LitematicParser {
         if (palette.isEmpty() || blockStates.length == 0) {
             return;
         }
+        out.paletteEntries += palette.size();
 
         int volume = sizeX * sizeY * sizeZ;
         int bitsPerBlock = Math.max(2, 32 - Integer.numberOfLeadingZeros(Math.max(1, palette.size() - 1)));
@@ -78,12 +85,14 @@ final class LitematicParser {
             int z = (index / sizeX) % sizeZ;
             int y = index / (sizeX * sizeZ);
 
-            LoadedSchematic.BlockPosition worldPos = new LoadedSchematic.BlockPosition(
-                startX + x,
-                startY + y,
-                startZ + z
-            );
-            out.put(worldPos, palette.get(paletteIndex));
+            String blockState = palette.get(paletteIndex);
+            if ("minecraft:air".equals(blockState)) {
+                out.airBlocks++;
+                continue;
+            }
+
+            LoadedSchematic.BlockPosition worldPos = new LoadedSchematic.BlockPosition(startX + x, startY + y, startZ + z);
+            out.blocks.put(worldPos, blockState);
         }
     }
 
@@ -91,6 +100,9 @@ final class LitematicParser {
         int bitIndex = index * bitsPerValue;
         int startLong = bitIndex >>> 6;
         int startOffset = bitIndex & 63;
+        if (startLong >= data.length) {
+            return -1;
+        }
 
         long value = data[startLong] >>> startOffset;
         int endOffset = startOffset + bitsPerValue;
@@ -109,22 +121,13 @@ final class LitematicParser {
 
         List<String> palette = new ArrayList<>();
         for (Object item : list) {
-            if (!(item instanceof Map<?, ?> state)) {
-                continue;
-            }
-
+            if (!(item instanceof Map<?, ?> state)) continue;
             Object nameRaw = state.get("Name");
-            if (!(nameRaw instanceof String name)) {
-                continue;
-            }
-
+            if (!(nameRaw instanceof String name)) continue;
             Object propertiesRaw = state.get("Properties");
-            Map<String, String> props = propertiesRaw instanceof Map<?, ?> propsMap
-                ? readProperties(propsMap)
-                : Map.of();
+            Map<String, String> props = propertiesRaw instanceof Map<?, ?> propsMap ? readProperties(propsMap) : Map.of();
             palette.add(formatState(name, props));
         }
-
         return List.copyOf(palette);
     }
 
@@ -139,16 +142,12 @@ final class LitematicParser {
     }
 
     private String formatState(String blockName, Map<String, String> properties) {
-        if (properties.isEmpty()) {
-            return blockName;
-        }
-
+        if (properties.isEmpty()) return blockName;
         String props = properties.entrySet().stream()
             .sorted(Comparator.comparing(Map.Entry::getKey))
             .map(entry -> entry.getKey() + "=" + entry.getValue())
             .reduce((left, right) -> left + "," + right)
             .orElse("");
-
         return blockName + "[" + props + "]";
     }
 
@@ -160,26 +159,29 @@ final class LitematicParser {
         if (!(value instanceof Map<?, ?> compound)) {
             return new Vec3(0, 0, 0);
         }
+        return new Vec3(asInt(compound.get("x")), asInt(compound.get("y")), asInt(compound.get("z")));
+    }
 
-        return new Vec3(
-            asInt(compound.get("x")),
-            asInt(compound.get("y")),
-            asInt(compound.get("z"))
-        );
+    private Map<String, String> readMetadata(Object value) {
+        if (!(value instanceof Map<?, ?> metadataRaw)) {
+            return Map.of();
+        }
+        Map<String, String> metadata = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> entry : metadataRaw.entrySet()) {
+            if (entry.getKey() instanceof String key && entry.getValue() != null) {
+                metadata.put(key, String.valueOf(entry.getValue()));
+            }
+        }
+        return Map.copyOf(metadata);
     }
 
     private int asInt(Object value) {
-        if (value instanceof Number number) {
-            return number.intValue();
-        }
-        return 0;
+        return value instanceof Number number ? number.intValue() : 0;
     }
 
     private NbtTag readNamedTag(DataInputStream in) throws IOException {
         byte typeId = in.readByte();
-        if (typeId == 0) {
-            return new NbtTag(NbtType.END, "", null);
-        }
+        if (typeId == 0) return new NbtTag(NbtType.END, "", null);
         String name = in.readUTF();
         Object payload = readPayload(in, NbtType.fromId(typeId));
         return new NbtTag(NbtType.fromId(typeId), name, payload);
@@ -206,17 +208,13 @@ final class LitematicParser {
             case INT_ARRAY -> {
                 int len = in.readInt();
                 int[] data = new int[len];
-                for (int i = 0; i < len; i++) {
-                    data[i] = in.readInt();
-                }
+                for (int i = 0; i < len; i++) data[i] = in.readInt();
                 yield data;
             }
             case LONG_ARRAY -> {
                 int len = in.readInt();
                 long[] data = new long[len];
-                for (int i = 0; i < len; i++) {
-                    data[i] = in.readLong();
-                }
+                for (int i = 0; i < len; i++) data[i] = in.readLong();
                 yield data;
             }
         };
@@ -226,9 +224,7 @@ final class LitematicParser {
         NbtType elementType = NbtType.fromId(in.readByte());
         int len = in.readInt();
         List<Object> out = new ArrayList<>(len);
-        for (int i = 0; i < len; i++) {
-            out.add(readPayload(in, elementType));
-        }
+        for (int i = 0; i < len; i++) out.add(readPayload(in, elementType));
         return out;
     }
 
@@ -237,10 +233,7 @@ final class LitematicParser {
         while (true) {
             byte typeId = in.readByte();
             NbtType type = NbtType.fromId(typeId);
-            if (type == NbtType.END) {
-                break;
-            }
-
+            if (type == NbtType.END) break;
             String key = in.readUTF();
             Object value = readPayload(in, type);
             out.put(key, value);
@@ -248,24 +241,22 @@ final class LitematicParser {
         return out;
     }
 
+    record ParseResult(Map<LoadedSchematic.BlockPosition, String> blocks, Map<String, String> metadata, LoadedSchematic.SchematicStats stats) {}
+
+    private static final class ParseAccumulator {
+        private final Map<LoadedSchematic.BlockPosition, String> blocks = new LinkedHashMap<>();
+        private int regionCount;
+        private int paletteEntries;
+        private int airBlocks;
+    }
     private record NbtTag(NbtType type, String name, Object value) {}
 
     private enum NbtType {
-        END(0), BYTE(1), SHORT(2), INT(3), LONG(4), FLOAT(5), DOUBLE(6),
-        BYTE_ARRAY(7), STRING(8), LIST(9), COMPOUND(10), INT_ARRAY(11), LONG_ARRAY(12);
-
+        END(0), BYTE(1), SHORT(2), INT(3), LONG(4), FLOAT(5), DOUBLE(6), BYTE_ARRAY(7), STRING(8), LIST(9), COMPOUND(10), INT_ARRAY(11), LONG_ARRAY(12);
         private final int id;
-
-        NbtType(int id) {
-            this.id = id;
-        }
-
+        NbtType(int id) { this.id = id; }
         static NbtType fromId(int id) {
-            for (NbtType type : values()) {
-                if (type.id == id) {
-                    return type;
-                }
-            }
+            for (NbtType type : values()) if (type.id == id) return type;
             throw new IllegalArgumentException("Unsupported NBT tag id: " + id);
         }
     }

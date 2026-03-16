@@ -10,12 +10,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 
-/**
- * Загружает схематики с диска в иммутабельную модель {@link LoadedSchematic}.
- *
- * <p>На текущем этапе поддерживается формат `.litematic` с базовой загрузкой
- * метаданных и подготовленной точкой расширения для парсинга блоков.</p>
- */
 public final class SchematicLoader {
     private static final String SUPPORTED_EXTENSION = ".litematic";
 
@@ -29,10 +23,10 @@ public final class SchematicLoader {
         FileTime lastModifiedTime = Files.getLastModifiedTime(normalized);
         Instant lastModified = lastModifiedTime.toInstant();
 
-        Map<LoadedSchematic.BlockPosition, String> blocks = parseBlocks(normalized);
-        SchematicBoundingBox boundingBox = computeBoundingBox(blocks);
+        LitematicParser.ParseResult parsed = parse(normalized);
+        SchematicBoundingBox boundingBox = computeBoundingBox(parsed.blocks());
 
-        Map<String, String> metadata = new HashMap<>();
+        Map<String, String> metadata = new HashMap<>(parsed.metadata());
         metadata.put("fileName", fileName);
         metadata.put("format", "litematic");
         metadata.put("sizeBytes", Long.toString(fileSize));
@@ -46,7 +40,8 @@ public final class SchematicLoader {
             fileSize,
             lastModified,
             boundingBox,
-            blocks,
+            parsed.blocks(),
+            parsed.stats(),
             metadata
         );
     }
@@ -58,16 +53,12 @@ public final class SchematicLoader {
         }
     }
 
-    private Map<LoadedSchematic.BlockPosition, String> parseBlocks(Path path) throws IOException {
+    private LitematicParser.ParseResult parse(Path path) throws IOException {
         Objects.requireNonNull(path, "path");
         return new LitematicParser().parse(path);
     }
 
     private SchematicBoundingBox computeBoundingBox(Map<LoadedSchematic.BlockPosition, String> blocks) {
-        if (blocks.isEmpty()) {
-            return SchematicBoundingBox.singleBlockOrigin();
-        }
-
         int minX = Integer.MAX_VALUE;
         int minY = Integer.MAX_VALUE;
         int minZ = Integer.MAX_VALUE;

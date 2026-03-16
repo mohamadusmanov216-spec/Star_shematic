@@ -1,6 +1,5 @@
 package sbuild.redstone;
 
-import net.minecraft.block.enums.ComparatorMode;
 import net.minecraft.state.property.Properties;
 
 import java.util.ArrayList;
@@ -8,13 +7,11 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Performs structural and signal-level validation of redstone circuits.
+ * Minimal, reliable redstone validation: component shape and connectivity sanity checks.
  */
 public final class RedstoneValidationService {
     private final WireStrengthCalculator wireStrengthCalculator;
     private final RepeaterDelayResolver repeaterDelayResolver;
-    private final ComparatorModeResolver comparatorModeResolver;
-    private final ObserverPulseAnalyzer observerPulseAnalyzer;
 
     public RedstoneValidationService(
         WireStrengthCalculator wireStrengthCalculator,
@@ -24,8 +21,6 @@ public final class RedstoneValidationService {
     ) {
         this.wireStrengthCalculator = wireStrengthCalculator;
         this.repeaterDelayResolver = repeaterDelayResolver;
-        this.comparatorModeResolver = comparatorModeResolver;
-        this.observerPulseAnalyzer = observerPulseAnalyzer;
     }
 
     public Result validate(RedstoneGraph graph) {
@@ -45,22 +40,11 @@ public final class RedstoneValidationService {
                     issues.add("Repeater has no facing at " + node.pos());
                 }
             }
-            if (node.type() == RedstoneNode.Type.COMPARATOR) {
-                ComparatorMode mode = comparatorModeResolver.resolve(node);
-                if (mode != ComparatorMode.COMPARE && mode != ComparatorMode.SUBTRACT) {
-                    issues.add("Invalid comparator mode at " + node.pos());
-                }
-                if (!node.state().contains(Properties.HORIZONTAL_FACING)) {
-                    issues.add("Comparator has no facing at " + node.pos());
-                }
+            if (node.type() == RedstoneNode.Type.COMPARATOR && !node.state().contains(Properties.HORIZONTAL_FACING)) {
+                issues.add("Comparator has no facing at " + node.pos());
             }
-            if (node.type() == RedstoneNode.Type.OBSERVER) {
-                if (!node.state().contains(Properties.FACING)) {
-                    issues.add("Observer has no facing at " + node.pos());
-                }
-                if (!observerPulseAnalyzer.emitsPulse(node)) {
-                    issues.add("Observer not currently pulsing at " + node.pos());
-                }
+            if (node.type() == RedstoneNode.Type.OBSERVER && !node.state().contains(Properties.FACING)) {
+                issues.add("Observer has no facing at " + node.pos());
             }
         }
 
